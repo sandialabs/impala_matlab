@@ -56,8 +56,8 @@ ac_all=ac_all/nm;
 tau_all = (1+2*sum(ac_all));
 ess_all=nr/tau_all;
 
-plot((1:length(ac)).*iLag,ac_all,'g-','LineWidth',2);hold on
 if doPlot==1
+    plot((1:length(ac)).*iLag,ac_all,'g-','LineWidth',2);hold on
     grid on
     xl=xlim;
     x_tau=linspace(xl(1),xl(2),51);
