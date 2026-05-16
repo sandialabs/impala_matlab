@@ -2,6 +2,9 @@
 
 Impala MATLAB package
 =====================
+
+![](logo.png)
+
 *MATLAB library for modular Bayesian model calibration.  Posterior exploration includes tempering and adaptive MCMC.*
 
 This is an MATLAB translation of LANLs [Impala](https://github.com/lanl/impala).
