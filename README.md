@@ -1,5 +1,7 @@
 [![Pipeline Status](https://github.com/sandialabs/impala_matlab/actions/workflows/matlab.yml/badge.svg)](https://github.com/sandialabs/impala_matlab/actions/workflows/matlab.yml)
 
+![](logo.png)
+
 Impala MATLAB package
 =====================
 
