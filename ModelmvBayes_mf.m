@@ -108,8 +108,16 @@ classdef ModelmvBayes_mf < handle
             end
             if pool
                 pred = obj.model.predict(parmat_array, obj.ii, nugget);
+                pred = squeeze(pred);
+                if size(pred,2) == 1
+                    pred = pred';
+                end
                 for i = 1:length(obj.mod_corr)
                     pred1 = obj.mod_corr{i}.predict(parmat_array, obj.ii, nugget);
+                    pred1 = squeeze(pred1);
+                    if size(pred1,2) == 1
+                        pred1 = pred1';
+                    end
                     if mod(i,2) == 1
                         pred = pred + pred1;
                     else
