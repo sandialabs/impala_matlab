@@ -27,7 +27,7 @@ classdef ModelmvBayes_mf < handle
     end
 
     methods
-        function obj = ModelmvBayes_mf(bmod, input_names, exp_ind, s2)
+        function obj = ModelmvBayes_mf(bmod, bmod_corr, input_names, exp_ind, s2)
             % **PCA Based Model Emulator using mvBayes MultiFidelity Framework**
             %
             % This function setups up emulator object
