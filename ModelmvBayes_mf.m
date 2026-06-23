@@ -1,5 +1,5 @@
-classdef ModelBassPca_func_mf < handle
-    % PCA Based Model Emulator
+classdef ModelmvBayes_mf < handle
+    % PCA Based Model Emulator using mvBayes object
 
     properties
         model
@@ -11,7 +11,7 @@ classdef ModelBassPca_func_mf < handle
         meas_error_cor
         discrep_cov
         ii
-        trunc_error_var
+        trunc_error_cov
         mod_s2
         emu_vars
         yobs
@@ -27,21 +27,21 @@ classdef ModelBassPca_func_mf < handle
     end
 
     methods
-        function obj = ModelBassPca_func_mf(bmod, bmod_corr, input_names, exp_ind, s2)
-            % **PCA Based Model Emulator using BASS MultiFidelity**
+        function obj = ModelmvBayes_mf(bmod, input_names, exp_ind, s2)
+            % **PCA Based Model Emulator using mvBayes MultiFidelity Framework**
             %
             % This function setups up emulator object
             %
-            % bmod: a object of the type BassBassis
+            % bmod: a object of the type mvBayes
             % bmod_corr: a cell array of objects of the type BassBassis,
             %            these are the corrections to the LF bmod
             % input_names: cell array of strings of input variable names
             % exp_ind: experiment indices (default: NaN)
             % s2: how to sample error variance (default: 'MH')
             % 
-            % returns an object of class ModelBassPca_func_mf
+            % returns an object of class ModelmvBayes_mf
             arguments
-                bmod BassBasis
+                bmod mvBayes
                 bmod_corr cell
                 input_names
                 exp_ind = NaN;
@@ -51,21 +51,17 @@ classdef ModelBassPca_func_mf < handle
             obj.model = bmod;
             obj.mod_corr = bmod_corr;
             obj.stochastic = true;
-            obj.nmcmc = length(bmod.bm_list{1}.samples.s2);
+            obj.nmcmc = length(bmod.bmList{1}.samples.s2);
             obj.input_names = input_names;
-            obj.basis = obj.model.basis;
+            obj.basis = obj.model.basisInfo.basis';
             obj.meas_error_cor = eye(size(obj.basis,1));
             obj.discrep_cov = eye(size(obj.basis,1))*1e-12;
             obj.ii = 1;
-            npc = obj.model.nbasis;
-            if npc > 1
-                obj.trunc_error_var = diag(cov(obj.model.trunc_error'));
-            else
-                obj.trunc_error_var = diag(reshape(cov(obj.model.trunc_error'),1,1));
-            end
+            npc = obj.model.basisInfo.nBasis;
+            obj.trunc_error_cov = cov(obj.model.basisInfo.truncError);
             obj.mod_s2 = zeros(obj.nmcmc, npc);
             for i = 1:npc
-                obj.mod_s2(:,i) = obj.model.bm_list{i}.samples.s2;
+                obj.mod_s2(:,i) = obj.model.bmList{i}.samples.s2;
             end
             obj.emu_vars = obj.mod_s2(obj.ii,:);
             obj.yobs = NaN;
@@ -135,26 +131,17 @@ classdef ModelBassPca_func_mf < handle
         end
         
         function out = lik_cov_inv(obj, s2vec)
-            vec = obj.trunc_error_var + s2vec(:);
-            Ainv = diag(1./vec);
-            Aldet = sum(log(vec));
-            out = obj.swm(Ainv, obj.basis, diag(1./obj.emu_vars), obj.basis', Aldet, sum(log(obj.emu_vars)));
+            n = length(s2vec);
+            Sigma = cor2cov(obj.meas_error_cor(1:n,1:n), sqrt(s2vec));
+            mat = Sigma + obj.trunc_error_cov + obj.discrep_cov + obj.basis * diag(obj.emu_vars) * obj.basis';
+            try
+                R = chol(mat);
+            catch
+                R = chol(mat+.0001*eye(size(mat,1)));
+            end
+            out.ldet = 2 * sum(log(diag(R)));
+            out.inv = inv(mat);
         end
 
-        function out = chol_solve(~, x)
-            R = chol(x);
-            ldet = 2 * sum(log(diag(R)));
-            inv1 = inv(x);
-            out.inv = inv1;
-            out.ldet = ldet;
-        end
-
-        function out = swm(obj, Ainv, U, Cinv, V, Aldet, Cldet)
-            in_mat = obj.chol_solve(Cinv + V*Ainv*U);
-            inv1 = Ainv - Ainv * U * in_mat.inv * V * Ainv;
-            ldet = in_mat.ldet + Aldet + Cldet;
-            out.inv = inv1;
-            out.ldet = ldet;
-        end
     end
 end
