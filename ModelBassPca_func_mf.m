@@ -117,9 +117,9 @@ classdef ModelBassPca_func_mf < handle
                     if mod(i,2) == 1
                         pred = pred + pred1;
                     else
-                        gam = v_to_gam(pred1);
-                        for j = 1:size(gam,1)
-                            pred(j,:) = warp_f_gamma(pred(j,:),gam(j,:),linspace(0,1,size(gam,2)))';
+                        gam = v_to_gam(pred1');
+                        for j = 1:size(gam,2)
+                            pred(j,:) = warp_f_gamma(pred(j,:),gam(:,j),linspace(0,1,size(gam,1)))';
                         end
                     end
                 end
