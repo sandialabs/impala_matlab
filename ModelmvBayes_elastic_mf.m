@@ -1,4 +1,4 @@
-classdef ModelmvBayes_amp_mf < handle
+classdef ModelmvBayes_elastic_mf < handle
     % PCA Based Model Emulator using mvBayes object
 
     properties
@@ -27,8 +27,8 @@ classdef ModelmvBayes_amp_mf < handle
     end
 
     methods
-        function obj = ModelmvBayes_amp_mf(bmod, bmod_corr, input_names, exp_ind, s2)
-            % **PCA Based Model Emulator using mvBayes MultiFidelity Framework Amplitude**
+        function obj = ModelmvBayes_elastic_mf(bmod, bmod_corr, input_names, exp_ind, s2)
+            % **PCA Based Model Emulator using mvBayes MultiFidelity Framework**
             %
             % This function setups up emulator object
             %
@@ -39,7 +39,7 @@ classdef ModelmvBayes_amp_mf < handle
             % exp_ind: experiment indices (default: NaN)
             % s2: how to sample error variance (default: 'MH')
             % 
-            % returns an object of class ModelmvBayes_amp_mf
+            % returns an object of class ModelmvBayes_elastic_mf
             arguments
                 bmod mvBayes
                 bmod_corr cell
@@ -118,7 +118,14 @@ classdef ModelmvBayes_amp_mf < handle
                     if size(pred1,2) == 1
                         pred1 = pred1';
                     end
-                    pred = pred + pred1;
+                    if mod(i,2) == 1
+                        pred = pred + pred1;
+                    else
+                        gam = v_to_gam(pred1');
+                        for j = 1:size(gam,2)
+                            pred(j,:) = warp_f_gamma(pred(j,:),gam(:,j),linspace(0,1,size(gam,1)))';
+                        end
+                    end
                 end   
             else
                 keyboard

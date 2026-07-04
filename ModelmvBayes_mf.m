@@ -38,7 +38,7 @@ classdef ModelmvBayes_mf < handle
             % input_names: cell array of strings of input variable names
             % exp_ind: experiment indices (default: NaN)
             % s2: how to sample error variance (default: 'MH')
-            % 
+            %
             % returns an object of class ModelmvBayes_mf
             arguments
                 bmod mvBayes
@@ -118,15 +118,8 @@ classdef ModelmvBayes_mf < handle
                     if size(pred1,2) == 1
                         pred1 = pred1';
                     end
-                    if mod(i,2) == 1
-                        pred = pred + pred1;
-                    else
-                        gam = v_to_gam(pred1');
-                        for j = 1:size(gam,2)
-                            pred(j,:) = warp_f_gamma(pred(j,:),gam(:,j),linspace(0,1,size(gam,1)))';
-                        end
-                    end
-                end   
+                    pred = pred + pred1;
+                end
             else
                 keyboard
             end
@@ -137,7 +130,7 @@ classdef ModelmvBayes_mf < handle
             vec = yobs(:) - pred(:);
             out = -0.5*(cov.ldet + vec'*cov.inv*vec);
         end
-        
+
         function out = lik_cov_inv(obj, s2vec)
             n = length(s2vec);
             Sigma = cor2cov(obj.meas_error_cor(1:n,1:n), sqrt(s2vec));
