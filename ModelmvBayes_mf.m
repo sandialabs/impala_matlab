@@ -33,7 +33,7 @@ classdef ModelmvBayes_mf < handle
             % This function setups up emulator object
             %
             % bmod: a object of the type mvBayes
-            % bmod_corr: a cell array of objects of the type BassBassis,
+            % bmod_corr: a cell array of objects of the type mvBayes,
             %            these are the corrections to the LF bmod
             % input_names: cell array of strings of input variable names
             % exp_ind: experiment indices (default: NaN)
