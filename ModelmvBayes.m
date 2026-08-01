@@ -38,7 +38,7 @@ classdef ModelmvBayes < handle
             % 
             % returns an object of class ModelmvBayes
             arguments
-                bmod mvBayes
+                bmod {mustBeA(bmod, {'mvBayes','mvBayesMF'})}
                 input_names
                 exp_ind = NaN;
                 s2 = 'MH';
