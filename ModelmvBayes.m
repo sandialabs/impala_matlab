@@ -102,7 +102,7 @@ classdef ModelmvBayes < handle
                 parmat_array(:,i) = parmat.(fn{i});
             end
             if pool
-                pred = obj.model.predict(parmat_array, obj.ii, nugget);
+                pred = obj.model.predict(parmat_array, 'idxSamples', obj.ii);
                 pred = squeeze(pred);
             else
                 keyboard
