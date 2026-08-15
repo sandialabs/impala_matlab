@@ -107,13 +107,13 @@ classdef ModelmvBayes_mf < handle
                 parmat_array(:,i) = parmat.(fn{i});
             end
             if pool
-                pred = obj.model.predict(parmat_array, obj.ii, nugget);
+                pred = obj.model.predict(parmat_array, obj.ii);
                 pred = squeeze(pred);
                 if size(pred,2) == 1
                     pred = pred';
                 end
                 for i = 1:length(obj.mod_corr)
-                    pred1 = obj.mod_corr{i}.predict(parmat_array, obj.ii, nugget);
+                    pred1 = obj.mod_corr{i}.predict(parmat_array, 'idxSamples', obj.ii);
                     pred1 = squeeze(pred1);
                     if size(pred1,2) == 1
                         pred1 = pred1';
