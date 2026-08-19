@@ -110,9 +110,23 @@ classdef ModelmvBayes < handle
 
         end
 
-        function out = llik(~, yobs, pred, cov)
-            vec = yobs(:) - pred(:);
-            out = -0.5*(cov.ldet + vec'*cov.inv*vec);
+        function out = llik(obj, yobs, pred, cov)
+            if strcmpi(obj.model.basisInfo.basisType, "pns")
+                  L = chol(P, 'lower');
+                  vec = L' * (yobs(:).*pred(:));
+                  t = linspace(0,1,length(vec)):
+                  q1dotq2 = trapz(t(:),vec);
+                  if q1dotq2>1
+                     q1dotq2=1;
+                  elseif q1dotq2<-1
+                      q1dotq2=-1;
+                  end
+                  out = -0.5*(cov.ldet + acos(q2dotq2));
+            else
+                  vec = yobs(:) - pred(:);
+                  out = -0.5*(cov.ldet + vec'*cov.inv*vec);
+            end
+            
         end
         
         function out = lik_cov_inv(obj, s2vec)
