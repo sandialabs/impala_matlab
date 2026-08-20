@@ -35,7 +35,7 @@ classdef ModelmvBayes < handle
             % input_names: cell array of strings of input variable names
             % exp_ind: experiment indices (default: NaN)
             % s2: how to sample error variance (default: 'MH')
-            % 
+            %
             % returns an object of class ModelmvBayes
             arguments
                 bmod {mustBeA(bmod, {'mvBayes','mvBayesMF'})}
@@ -112,23 +112,17 @@ classdef ModelmvBayes < handle
 
         function out = llik(obj, yobs, pred, cov)
             if strcmpi(obj.model.basisInfo.basisType, "pns")
-                  L = chol(cov.inv, 'lower');
-                  vec = L' * (yobs(:).*pred(:));
-                  t = linspace(0,1,length(vec)):
-                  q1dotq2 = trapz(t(:),vec);
-                  if q1dotq2>1
-                     q1dotq2=1;
-                  elseif q1dotq2<-1
-                      q1dotq2=-1;
-                  end
-                  out = -0.5*(cov.ldet + acos(q2dotq2));
+                mu = ones(1, length(yobs));
+                vyobs = inv_exp_map(mu,yobs);
+                vpred = inv_exp_map(mu,pred);
+                vec = vyobs(:) - vpred(:);
             else
-                  vec = yobs(:) - pred(:);
-                  out = -0.5*(cov.ldet + vec'*cov.inv*vec);
+                vec = yobs(:) - pred(:);
             end
-            
+            out = -0.5*(cov.ldet + vec'*cov.inv*vec);
+
         end
-        
+
         function out = lik_cov_inv(obj, s2vec)
             n = length(s2vec);
             Sigma = cor2cov(obj.meas_error_cor(1:n,1:n), sqrt(s2vec));
