@@ -111,14 +111,7 @@ classdef ModelmvBayes < handle
         end
 
         function out = llik(obj, yobs, pred, cov)
-            if strcmpi(obj.model.basisInfo.basisType, "pns")
-                mu = ones(1, length(yobs));
-                vyobs = inv_exp_map(mu,yobs);
-                vpred = inv_exp_map(mu,pred);
-                vec = vyobs(:) - vpred(:);
-            else
-                vec = yobs(:) - pred(:);
-            end
+            vec = yobs(:) - pred(:);
             out = -0.5*(cov.ldet + vec'*cov.inv*vec);
 
         end

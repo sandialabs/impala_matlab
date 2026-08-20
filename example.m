@@ -31,13 +31,13 @@ end
 x_true = [0.2028, 0.4930];
 ftilde_obs = f(x_true);
 gam_obs = linspace(0, 1, nt);
-vv_obs = gam_to_h(gam_obs');
+vv_obs = gam_to_psi(gam_obs');
 
 tt = linspace(0,1,nt);
 out = fdawarp(y_train',tt');
 out = out.multiple_align_functions(ftilde_obs', .01);
 gam_train = out.gam;
-vv_train = gam_to_h(gam_train);
+vv_train = gam_to_psi(gam_train);
 ftilde_train = out.fn;
 qtilde_train = out.qn;
 ftilde_obs = out.fmean;
@@ -85,7 +85,7 @@ else
         'idxSamplesArg', 'mcmc_use', 'residSDExtract', @(x) sqrt(x.samples.s2));
     emu_ftilde.plot();
     
-    emu_vv = mvBayes(@bass, x_train, vv_train', 'BasisType', 'pca', ...
+    emu_vv = mvBayes(@bass, x_train, vv_train', 'BasisType', 'pns', ...
         'idxSamplesArg', 'mcmc_use', 'residSDExtract', @(x) sqrt(x.samples.s2));
     emu_vv.plot();
 end
@@ -132,7 +132,7 @@ for idx = expnums
     ftilde_pred_obs{idx} = setup.models{cnt}.eval(theta);
     vv_pred_obs = setup.models{cnt+1}.eval(theta);
     cnt = cnt + 2;
-    gam_pred_obs{idx} = h_to_gam(vv_pred_obs');
+    gam_pred_obs{idx} = psi_to_gam(vv_pred_obs');
 
     % compute median of posterior prediction
     obj1 = fdawarp(ftilde_pred_obs{idx}',time_new);
