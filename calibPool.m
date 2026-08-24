@@ -2,7 +2,9 @@ function out = calibPool(setup)
 % This function runs pooled Bayesian Model Calibration with adapative MCMC,
 % tempering, and decorrelation steps
 % 
-% input theta will be normalized to 0-1 and sampled from uniform priors
+% input theta will be normalized to 0-1 and sampled from uniform priors,
+% unless priors have been added to setup with addThetaPrior or
+% addJointThetaPrior, in which case those priors are used
 %
 % setup: an object of class CalibSetup
 %
@@ -31,11 +33,18 @@ for i = 1:setup.nexp
 end
 
 theta_start = rand(setup.ntemps, setup.p);
-good = setup.checkConstraints(tran_unif(theta_start, setup.bounds_mat, fieldnames(setup.bounds)), setup.bounds);
+good = start_ok(theta_start, setup);
 
+ntry = 0;
 while any(~good)
     theta_start(~good,:) = rand(sum(~good), setup.p);
-    good(~good) = setup.checkConstraints(tran_unif(theta_start(~good,:), setup.bounds_mat, fieldnames(setup.bounds)), setup.bounds);
+    good(~good) = start_ok(theta_start(~good,:), setup);
+    ntry = ntry + 1;
+    if ntry > 1e5
+        error('calibPool:badStart', ...
+              ['Could not find a starting value satisfying the constraints ' ...
+               'and with finite theta prior density.']);
+    end
 end
 
 theta(1,:,:) = theta_start;
@@ -66,6 +75,10 @@ for i = 1:setup.nexp
     end
 
 end
+
+% current log-prior for theta at each temperature (zeros if no prior set)
+tmp_theta = reshape(theta(1,:,:), setup.ntemps, setup.p);
+lpr_curr = eval_theta_priors(tran_unif(tmp_theta, setup.bounds_mat, fieldnames(setup.bounds)), setup.theta_prior);
 
 cov_theta_cand = AMcov_pool(setup.ntemps, setup.p, setup.start_var_theta, setup.start_adapt_iter, setup.start_tau_theta);
 cov_ls2_cand = cell(1,setup.nexp);
@@ -130,6 +143,7 @@ for m = 2:setup.nmcmc
     % get predictions and SSE
     pred_cand = pred_curr;
     llik_cand = llik_curr;
+    lpr_cand = eval_theta_priors(tran_unif(theta_cand, setup.bounds_mat, fieldnames(setup.bounds)), setup.theta_prior);
     if any(good_values)
         llik_cand(:, good_values) = 0;
         for i = 1:setup.nexp
@@ -140,7 +154,7 @@ for m = 2:setup.nmcmc
         end
     end
 
-    llik_diff = (sum(llik_cand,1) - sum(llik_curr,1));
+    llik_diff = ((sum(llik_cand,1) + lpr_cand) - (sum(llik_curr,1) + lpr_curr));
     llik_diff = llik_diff(good_values);
 
     alpha(:) = -Inf;
@@ -148,6 +162,7 @@ for m = 2:setup.nmcmc
     idx = find(log(rand(1,setup.ntemps)) < alpha);
     for t = idx
         theta(m,t,:) = theta_cand(t,:);
+        lpr_curr(t) = lpr_cand(t);
         count(t,t) = count(t,t) + 1;
         for i = 1:setup.nexp
             llik_curr(i,t) = llik_cand(i,t);
@@ -167,6 +182,7 @@ for m = 2:setup.nmcmc
             good_values = setup.checkConstraints(tran_unif(theta_cand, setup.bounds_mat, fieldnames(setup.bounds)), setup.bounds);
             pred_cand = pred_curr;
             llik_cand = llik_curr;
+            lpr_cand = eval_theta_priors(tran_unif(theta_cand, setup.bounds_mat, fieldnames(setup.bounds)), setup.theta_prior);
 
             if any(good_values)
                 llik_cand(:, good_values) = 0;
@@ -180,7 +196,7 @@ for m = 2:setup.nmcmc
 
             alpha(:) = -Inf;
 
-            llik_diff = (sum(llik_cand,1) - sum(llik_curr,1));
+            llik_diff = ((sum(llik_cand,1) + lpr_cand) - (sum(llik_curr,1) + lpr_curr));
             llik_diff = llik_diff(good_values);
 
             alpha(good_values) = setup.itl(good_values) .* llik_diff;
@@ -188,6 +204,7 @@ for m = 2:setup.nmcmc
             idx = find(log(rand(1,setup.ntemps)) < alpha);
             for t = idx
                 theta(m,t,k) = theta_cand(t,k);
+                lpr_curr(t) = lpr_cand(t);
                 count_decor(k,t) = count_decor(k,t) + 1;
                 for i = 1:setup.nexp
                     pred_curr{i}(t,:) = pred_cand{i}(t,:);
@@ -255,6 +272,7 @@ for m = 2:setup.nmcmc
             sw = sw';
             sw_alpha(:) = 0;
             sw_alpha = sw_alpha + (setup.itl(sw(2,:)) - setup.itl(sw(1,:))).*(sum(llik_curr(:, sw(1,:)),1)-sum(llik_curr(:, sw(2,:)),1));
+            sw_alpha = sw_alpha + (setup.itl(sw(2,:)) - setup.itl(sw(1,:))).*(lpr_curr(sw(1,:)) - lpr_curr(sw(2,:)));
             for i = 1:setup.nexp
                 sw_alpha = sw_alpha + (setup.itl(sw(2,:)) - setup.itl(sw(1,:))) .* ...
                     (sum(setup.s2_prior_kern{i}(exp(log_s2{i}(m,sw(1,:))), setup.ig_a{i}, setup.ig_b{i}),1) - ...
@@ -301,6 +319,10 @@ for m = 2:setup.nmcmc
                 tmp2 = theta(m,tt(2),:);
                 theta(m,tt(1),:) = tmp2;
                 theta(m,tt(2),:) = tmp1;
+                tmp1 = lpr_curr(tt(1));
+                tmp2 = lpr_curr(tt(2));
+                lpr_curr(tt(1)) = tmp2;
+                lpr_curr(tt(2)) = tmp1;
             end
         end
     end
@@ -328,3 +350,12 @@ out.pred_curr = pred_curr;
 out.discrep_vars = discrep_vars;
 out.llik = llik;
 out.theta_native = theta_native;
+
+function good = start_ok(th, setup)
+% A starting value is usable when it satisfies the constraint function and
+% has finite prior density. Without any theta priors the second condition is
+% always true, so behavior is unchanged.
+tu = tran_unif(th, setup.bounds_mat, fieldnames(setup.bounds));
+good = setup.checkConstraints(tu, setup.bounds);
+lp = eval_theta_priors(tu, setup.theta_prior);
+good = good & reshape(isfinite(lp), size(good));

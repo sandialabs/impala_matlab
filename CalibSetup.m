@@ -41,6 +41,7 @@ classdef CalibSetup < handle
         Sigma0_prior_df
         Sigma0_prior_scale
         nclustmax
+        theta_prior  % cell array of priors on the calibration parameters
     end
 
     methods
@@ -93,6 +94,100 @@ classdef CalibSetup < handle
             obj.theta_ind = {};
             obj.nswap = 5;
             obj.s2_prior_kern = {};
+            obj.theta_prior = {};
+        end
+
+        function obj = addThetaPrior(obj, dist, params, pname)
+            % This method adds a prior for the specified calibration
+            % parameter. Priors are evaluated on the native (unnormalized)
+            % scale of the parameter, i.e. the scale given by bounds.
+            %
+            % dist: string naming the distribution, one of 'normal',
+            %       'lognormal', 'beta', 'uniform', 'gamma', 'cauchy'
+            %       (default: 'uniform')
+            % params: struct of distribution parameters, e.g. for
+            %         dist='normal', struct('mean',0,'sd',1). Expected
+            %         fields are
+            %           normal    : mean, sd
+            %           lognormal : meanlog, sdlog
+            %           beta      : shape1, shape2
+            %           uniform   : min, max
+            %           gamma     : shape, rate
+            %           cauchy    : location, scale
+            % pname: name of the calibration parameter, must be one of the
+            %        field names of bounds
+            %
+            % returns an object of class CalibSetup
+            %
+            % Example:
+            %   bounds.t_1 = [0, 1];
+            %   setup = CalibSetup(bounds, @cf_bounds);
+            %   setup = setup.addThetaPrior('normal', ...
+            %                               struct('mean',0.5,'sd',0.1), 't_1');
+            arguments
+                obj
+                dist = 'uniform';
+                params = struct('min',0,'max',1);
+                pname = '';
+            end
+
+            pnames = fieldnames(obj.bounds);
+            if isempty(pname) || ~any(strcmp(pname, pnames))
+                error('CalibSetup:addThetaPrior:badName', ...
+                      ['No parameter name given or parameter not in set of ' ...
+                       'input names for any model in setup.models']);
+            end
+
+            obj.theta_prior{end+1} = struct('name', pname, 'dist', dist, ...
+                                            'params', params);
+        end
+
+        function obj = addJointThetaPrior(obj, pnames, log_density_fn)
+            % This method adds a joint prior over multiple calibration
+            % parameters. Priors are evaluated on the native (unnormalized)
+            % scale of the parameters.
+            %
+            % pnames: cell array of parameter names the joint prior applies
+            %         to, each must be a field name of bounds
+            % log_density_fn: function handle taking a struct of scalar
+            %                 parameter values (fields named by pnames) and
+            %                 returning a scalar log-density
+            %
+            % returns an object of class CalibSetup
+            %
+            % Example:
+            %   % joint normal prior on t_1 and t_2
+            %   my_joint_prior = @(pp) log(mvnpdf([pp.t_1, pp.t_2], ...
+            %                                     [0, 0], [1 0.5; 0.5 1]));
+            %   bounds.t_1 = [0, 1];
+            %   bounds.t_2 = [0, 1];
+            %   setup = CalibSetup(bounds, @cf_bounds);
+            %   setup = setup.addJointThetaPrior({'t_1','t_2'}, my_joint_prior);
+            arguments
+                obj
+                pnames
+                log_density_fn
+            end
+
+            if ischar(pnames) || isstring(pnames)
+                pnames = cellstr(pnames);
+            end
+            pnames = reshape(pnames, 1, []);
+
+            valid_names = fieldnames(obj.bounds);
+            if ~all(ismember(pnames, valid_names))
+                error('CalibSetup:addJointThetaPrior:badNames', ...
+                      ['One or more parameter names not in set of input ' ...
+                       'names for models in setup']);
+            end
+
+            if ~isa(log_density_fn, 'function_handle')
+                error('CalibSetup:addJointThetaPrior:badFunction', ...
+                      'log_density_fn must be a function handle');
+            end
+
+            obj.theta_prior{end+1} = struct('names', {pnames}, ...
+                                            'log_density_fn', log_density_fn);
         end
 
         function obj = addVecExperiments(obj, yobs, model, sd_est, s2_df, s2_ind, meas_error_cor, theta_ind, D, discrep_tau)
