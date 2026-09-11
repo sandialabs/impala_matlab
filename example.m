@@ -2,7 +2,7 @@
 clc; clear
 addpath(genpath('fdasrvf_MATLAB'))
 addpath(genpath('../mvbayes_matlab'))
-bppr = true; % if false we default to bass
+bppr = false; % if false we default to bass
 if bppr
     addpath('../bayesppr_matlab/')
 else
@@ -73,7 +73,7 @@ legend('Experiment')
 
 %% Fit Emulators
 if bppr
-    emu_ftilde = mvBayes(@bppr, x_train, ftilde_train', 'BasisType', 'pca', 'nBasis', 4, ...
+    emu_ftilde = mvBayes(@bppr, x_train, ftilde_train', 'BasisType', 'pca', ...
         'idxSamplesArg', 'mcmc_use', 'residSDExtract', @(x) sqrt(x.samples.s2));
     emu_ftilde.plot();
     
@@ -81,11 +81,11 @@ if bppr
         'idxSamplesArg', 'mcmc_use', 'residSDExtract', @(x) sqrt(x.samples.s2));
     emu_vv.plot();
 else
-    emu_ftilde = mvBayes(@bass, x_train, ftilde_train', 'BasisType', 'pca', 'nBasis', 4, ...
+    emu_ftilde = mvBayes(@bass, x_train, ftilde_train', 'BasisType', 'pca', ...
         'idxSamplesArg', 'mcmc_use', 'residSDExtract', @(x) sqrt(x.samples.s2));
     emu_ftilde.plot();
     
-    emu_vv = mvBayes(@bass, x_train, vv_train', 'BasisType', 'pns', ...
+    emu_vv = mvBayes(@bass, x_train, vv_train', 'BasisType', 'pca', ...
         'idxSamplesArg', 'mcmc_use', 'residSDExtract', @(x) sqrt(x.samples.s2));
     emu_vv.plot();
 end
@@ -132,7 +132,7 @@ for idx = expnums
     ftilde_pred_obs{idx} = setup.models{cnt}.eval(theta);
     vv_pred_obs = setup.models{cnt+1}.eval(theta);
     cnt = cnt + 2;
-    gam_pred_obs{idx} = gam_to_h(vv_pred_obs');
+    gam_pred_obs{idx} = h_to_gam(vv_pred_obs');
 
     % compute median of posterior prediction
     obj1 = fdawarp(ftilde_pred_obs{idx}',time_new);
@@ -160,7 +160,7 @@ for idx = expnums
     clf
     hold on
     plot(time_new, gam_train', 'Color', [0.66,0.66,0.66])  %light grey
-    plot(time_new, gam_pred_obs{idx}', 'Color', [0.58,0.70,0.75])  %light blue
+    plot(time_new, gam_pred_obs{idx}, 'Color', [0.58,0.70,0.75])  %light blue
     plot(time_new, gam_obs, 'k', 'Linewidth', 2)
 
 end
