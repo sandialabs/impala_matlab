@@ -184,11 +184,11 @@ for idx = expnums
     hold on
     plot(time_new, y_train(1,:), 'Color', [0.66,0.66,0.66])  %light grey
     plot(time_new, obspred(:,1), 'Color', [0.58,0.70,0.75])  %light blue
-    plot(time_new, ftilde_obs, 'k', 'Linewidth', 2)
+    plot(time_new, ftilde_obs, 'k')
     plot(time_new, y_train', 'Color', [0.66,0.66,0.66])  %light grey
     plot(time_new, obspred, 'Color', [0.58,0.70,0.75])  %light blue
     plot(time_new, ftilde_obs, 'k', 'Linewidth', 2)
     title('Original Data Prediction')
-    legend(['model runs','calibrated predictions','experiment'])
+    legend("model runs","calibrated predictions","experiment")
 
 end
