@@ -46,7 +46,7 @@ classdef ModelmvBayes < handle
 
             obj.model = bmod;
             obj.stochastic = true;
-            obj.nmcmc = length(bmod.bmList{1}.samples.s2);
+            obj.nmcmc = length(bmod.bmList{1}.samples.residSD);
             obj.input_names = input_names;
             obj.basis = obj.model.basisInfo.basis';
             obj.meas_error_cor = eye(size(obj.basis,1));
@@ -56,7 +56,7 @@ classdef ModelmvBayes < handle
             obj.trunc_error_cov = cov(obj.model.basisInfo.truncError);
             obj.mod_s2 = zeros(obj.nmcmc, npc);
             for i = 1:npc
-                obj.mod_s2(:,i) = obj.model.bmList{i}.samples.s2;
+                obj.mod_s2(:,i) = obj.model.bmList{i}.samples.residSD.^2;
             end
             obj.emu_vars = obj.mod_s2(obj.ii,:);
             obj.yobs = NaN;
