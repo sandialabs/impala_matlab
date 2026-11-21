@@ -1,4 +1,9 @@
 classdef AMcov_pool < handle
+    % Stores and updates the proposal covariance for Adaptive Metropolis in
+    % a pooled calibration (one covariance per temperature).
+    %
+    % Chains are stored as nmcmc x ntemps x p arrays. All slices are taken
+    % with reshape (never squeeze) so ntemps == 1 and p == 1 both work.
 
     properties
         eps
@@ -24,7 +29,7 @@ classdef AMcov_pool < handle
             end
             obj.eps = 1.0e-12;
             obj.AM_SCALAR = 2.4^2 / p;
-            obj.tau  = repelem(tau_start, ntemps);
+            obj.tau  = repmat(tau_start, ntemps, 1);
             obj.S    = zeros(ntemps, p, p);
             for i = 1:ntemps
                 obj.S(i,:,:) = eye(p) * start_var;
@@ -38,24 +43,31 @@ classdef AMcov_pool < handle
         end
 
         function obj = update(obj, x, m)
+            % update the covariance of the previous MCMC samples; called in
+            % the m-th iteration, so the latest value is x(m-1,:,:)
             if m > obj.start_adapt_iter
-                obj.mu = obj.mu + (squeeze(x(m-1,:,:))-obj.mu) ./ m;
-                tmp = squeeze(x(m-1,:,:)) - obj.mu;
-                if size(tmp,1) == 1
-                    tmp = tmp';
+                xl = reshape(x(m-1,:,:), obj.ntemps, obj.p);
+                obj.mu = obj.mu + (xl - obj.mu) ./ m;
+                d = xl - obj.mu;
+                for t = 1:obj.ntemps
+                    obj.cov(t,:,:) = ((m-1)/m) * reshape(obj.cov(t,:,:), obj.p, obj.p) + ...
+                        ((m-1)/(m*m)) * (d(t,:)' * d(t,:));
                 end
-                obj.cov = ( ...
-                    ((m-1)/m) * obj.cov  + ...
-                    ((m-1)/(m*m)) * tensorproduct('tij', tmp , 'ti' , tmp , 'tj'));
-                eyetmp = repmat(eye(obj.p),1,1,size(obj.cov,1));
-                eyetmp = permute(eyetmp,[3,1,2]);
-                obj.S = obj.AM_SCALAR * tensorproduct('ijk' , obj.cov + eyetmp * obj.eps , 'ijk' , exp(obj.tau') , 'i');
+                obj.setS();
             elseif m == obj.start_adapt_iter
-                obj.mu = squeeze(mean(x(1:m,:,:),1));
-                obj.cov = cov_3d_pcm(x(1:m,:,:), obj.mu);
-                eyetmp = repmat(eye(obj.p),1,1,size(obj.cov,1));
-                eyetmp = permute(eyetmp,[3,1,2]);
-                obj.S = obj.AM_SCALAR * tensorproduct('ijk' , obj.cov + eyetmp * obj.eps , 'ijk' , exp(obj.tau') , 'i');
+                xs = reshape(x(1:m,:,:), m, obj.ntemps, obj.p);
+                obj.mu = reshape(mean(xs, 1), obj.ntemps, obj.p);
+                for t = 1:obj.ntemps
+                    obj.cov(t,:,:) = cov(reshape(xs(:,t,:), m, obj.p));
+                end
+                obj.setS();
+            end
+        end
+
+        function obj = setS(obj)
+            for t = 1:obj.ntemps
+                obj.S(t,:,:) = obj.AM_SCALAR * exp(obj.tau(t)) * ...
+                    (reshape(obj.cov(t,:,:), obj.p, obj.p) + eye(obj.p) * obj.eps);
             end
         end
 
@@ -63,23 +75,20 @@ classdef AMcov_pool < handle
             % diminishing adaptation based on acceptance rate for each temperature
             if (mod(m,100) == 0) && (m > obj.start_adapt_iter)
                 delta = min(0.5, 5/sqrt(m+1));
-                obj.tau(find(obj.count_100 < 23)) = obj.tau(find(obj.count_100 < 23)) - delta;
-                obj.tau(find(obj.count_100 > 23)) = obj.tau(find(obj.count_100 > 23)) + delta;
-                obj.count_100 = obj.count_100 * 0;
+                obj.tau(obj.count_100 < 23) = obj.tau(obj.count_100 < 23) - delta;
+                obj.tau(obj.count_100 > 23) = obj.tau(obj.count_100 > 23) + delta;
+                obj.count_100(:) = 0;
             end
         end
 
         function x_cand = gen_cand(obj, x, m)
-            tmp = zeros(size(obj.S));
-            for i = 1:size(tmp,1)
-                tmp(i,:,:) = chol(squeeze(obj.S(i,:,:)), 'lower');
+            % returns an ntemps x p candidate
+            xl = reshape(x(m-1,:,:), obj.ntemps, obj.p);
+            x_cand = zeros(obj.ntemps, obj.p);
+            for t = 1:obj.ntemps
+                L = chol(reshape(obj.S(t,:,:), obj.p, obj.p), 'lower');
+                x_cand(t,:) = xl(t,:) + (L * randn(obj.p, 1))';
             end
-            xtmp = squeeze(x(m-1,:,:));
-            if size(xtmp,1) == 1
-                xtmp = xtmp(:);
-                tmp = squeeze(tmp);
-            end
-            x_cand = xtmp + tensorproduct('ij' , tmp , 'ijk' , randn(obj.ntemps, obj.p) , 'ik');
         end
     end
 end

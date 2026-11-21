@@ -41,6 +41,13 @@ classdef CalibSetup < handle
         Sigma0_prior_df
         Sigma0_prior_scale
         nclustmax
+        eta_prior_shape
+        eta_prior_rate
+        scale_proposal
+        sd_lower  % lower bounds on the error sd (only used with 'gibbs_trunc')
+        sd_upper  % upper bounds on the error sd (only used with 'gibbs_trunc')
+        theta0_start  % optional ntemps x p start for theta0 (0-1 scale)
+        theta_start   % optional ntemps x nclustmax x p start for clustered theta
         theta_prior  % cell array of priors on the calibration parameters
     end
 
@@ -93,8 +100,21 @@ classdef CalibSetup < handle
             obj.ntheta = [];
             obj.theta_ind = {};
             obj.nswap = 5;
+            obj.nswap_per = 0;
+            obj.start_temper = 1000;
             obj.s2_prior_kern = {};
+            obj.sd_lower = {};
+            obj.sd_upper = {};
             obj.theta_prior = {};
+            obj.start_var_theta = 1e-8;
+            obj.start_tau_theta = 0;
+            obj.start_var_ls2 = 1e-5;
+            obj.start_tau_ls2 = 0;
+            obj.start_adapt_iter = 300;
+            obj.nclustmax = 10;
+            obj.eta_prior_shape = 2;
+            obj.eta_prior_rate = 0.1;
+            obj.scale_proposal = false;
         end
 
         function obj = addThetaPrior(obj, dist, params, pname)
@@ -190,21 +210,27 @@ classdef CalibSetup < handle
                                             'log_density_fn', log_density_fn);
         end
 
-        function obj = addVecExperiments(obj, yobs, model, sd_est, s2_df, s2_ind, meas_error_cor, theta_ind, D, discrep_tau)
+        function obj = addVecExperiments(obj, yobs, model, sd_est, s2_df, s2_ind, meas_error_cor, theta_ind, D, discrep_tau, sd_lower, sd_upper)
             % This method adds vector experiments to calibration object
             %
             % yobs: a vector of the experiment or observation
-            % model: emulator (currently expecting a object of class
-            %        ModelBassPca_func, ModelBassPca_func_mf, or
-            %        ModelBpprPca_func
-            % sd_est: estimate of standard deviation
-            % s2_df: degrees of freedom of inverse gamma prior
-            % s2_ind: indices of function
-            % meas_error_cor: measurement error correlation (default: NaN) 
-            % theta_ind: indices of theta (default: NaN)
+            % model: emulator or model object (e.g. ModelBassPca_func,
+            %        ModelBassPca_func_mf, ModelBpprPca_func, ModelmvBayes,
+            %        ModelF)
+            % sd_est: estimate of standard deviation, one per error group
+            % s2_df: degrees of freedom of inverse gamma prior (scalar or
+            %        one per error group); 0 uses a half-Cauchy prior
+            % s2_ind: error group (1..length(sd_est)) of each element of yobs
+            % meas_error_cor: measurement error correlation (default: NaN)
+            % theta_ind: theta index of each element of yobs, used by
+            %            hierarchical and clustered calibration (default:
+            %            NaN, a single theta). Any distinct labels are
+            %            allowed; they are mapped to 1..ntheta.
             % D: discrepency basis (matrix of columns of basis, default:
             %    NaN)
-            % discrep_tau: discrepency sampling tau    
+            % discrep_tau: discrepency sampling tau
+            % sd_lower, sd_upper: bounds on the error sd, one per error
+            %                     group, used when model.s2 is 'gibbs_trunc'
             % returns an object of class CalibSetup
             arguments
                 obj
@@ -217,23 +243,81 @@ classdef CalibSetup < handle
                 theta_ind=NaN;
                 D=NaN;
                 discrep_tau=1;
+                sd_lower=[];
+                sd_upper=[];
+            end
+
+            n = length(yobs);
+            sd_est = reshape(sd_est, 1, []);
+            ns2 = length(sd_est);
+            s2_ind = reshape(s2_ind, 1, []);
+            if isscalar(s2_ind) && n > 1
+                s2_ind = repmat(s2_ind, 1, n);
+            end
+            if any(s2_ind == 0)
+                % allow 0-based indices (as used by the python package)
+                s2_ind = s2_ind + 1;
+            end
+            if length(s2_ind) ~= n
+                error('CalibSetup:addVecExperiments:badS2Ind', ...
+                      'length(s2_ind) must equal length(yobs)');
+            end
+            if any(s2_ind < 1) || any(s2_ind > ns2) || any(s2_ind ~= round(s2_ind))
+                error('CalibSetup:addVecExperiments:badS2Ind', ...
+                      's2_ind must take integer values between 1 and length(sd_est)');
+            end
+            s2_df = reshape(s2_df, 1, []);
+            if isscalar(s2_df)
+                s2_df = repmat(s2_df, 1, ns2);
+            end
+
+            if isscalar(theta_ind) && isnan(theta_ind)
+                theta_ind = ones(1,n);
+            end
+            theta_ind = reshape(theta_ind, 1, []);
+            if length(theta_ind) ~= n
+                error('CalibSetup:addVecExperiments:badThetaInd', ...
+                      'length(theta_ind) must equal length(yobs)');
+            end
+            [~, ~, theta_ind] = unique(theta_ind, 'stable');
+            theta_ind = reshape(theta_ind, 1, []);
+            ntheta = max(theta_ind);
+            for k = 1:ns2
+                if numel(unique(theta_ind(s2_ind == k))) > 1
+                    warning('CalibSetup:addVecExperiments:sharedError', ...
+                            'Cannot have multiple thetas with shared measurement error.');
+                    break
+                end
+            end
+
+            valid_s2 = {'gibbs','gibbs_trunc','MH','fix'};
+            if ~any(strcmp(model.s2, valid_s2))
+                error('CalibSetup:addVecExperiments:badS2', ...
+                      'model.s2 must be one of: %s', strjoin(valid_s2, ', '));
+            end
+            if strcmp(model.s2, 'gibbs_trunc')
+                if isempty(sd_lower) || isempty(sd_upper)
+                    error('CalibSetup:addVecExperiments:needBounds', ...
+                          'sd_lower and sd_upper are required when model.s2 is gibbs_trunc');
+                end
+            end
+            if ~isempty(sd_lower)
+                sd_lower = reshape(sd_lower, 1, []);
+                sd_upper = reshape(sd_upper, 1, []);
             end
 
             obj.ys{end+1} = yobs;
-            obj.y_lens{end+1} = length(yobs);
-            if isnan(theta_ind)
-                theta_ind = zeros(1,length(yobs));
-            end
-
+            obj.y_lens{end+1} = n;
             model.exp_ind = theta_ind;
+            model.nexp = ntheta;
             obj.theta_ind{end+1} = theta_ind;
-            obj.ntheta = [obj.ntheta length(unique(theta_ind))];
+            obj.ntheta = [obj.ntheta ntheta];
             model.yobs = yobs;
-            if ~isnan(meas_error_cor)
+            if ~all(isnan(meas_error_cor(:)))
                 model.meas_error_cor = meas_error_cor;
             end
 
-            if ~isnan(D)
+            if ~all(isnan(D(:)))
                 model.D = D;
                 model.nd = size(D,2);
                 model.discrep_tau = discrep_tau;
@@ -242,19 +326,21 @@ classdef CalibSetup < handle
             obj.models{end+1} = model;
             obj.nexp = obj.nexp + 1;
             obj.sd_est{end+1} = sd_est;
+            obj.sd_lower{end+1} = sd_lower;
+            obj.sd_upper{end+1} = sd_upper;
             obj.s2_df{end+1} = s2_df;
             obj.ig_a{end+1} = s2_df/2;
-            obj.ig_b{end+1} = s2_df/2 * sd_est^2;
+            obj.ig_b{end+1} = s2_df/2 .* sd_est.^2;
             obj.s2_ind{end+1} = s2_ind;
-            obj.s2_exp_ind{end+1} = 1:length(sd_est);
-            obj.ns2{end+1} = length(sd_est);
-            vec = zeros(length(sd_est), 1);
-            for i = 1:length(vec)
+            obj.s2_exp_ind{end+1} = 1:ns2;
+            obj.ns2{end+1} = ns2;
+            vec = zeros(1, ns2);
+            for i = 1:ns2
                 vec(i) = sum(s2_ind==i);
             end
             obj.ny_s2{end+1} = vec;
             obj.nclustmax = max(sum(obj.ntheta),10);
-            if sum(s2_df == 0) > 1
+            if any(s2_df == 0)
                 obj.s2_prior_kern{end+1} = @ldhc_kern;
             else
                 obj.s2_prior_kern{end+1} = @ldig_kern;
@@ -273,7 +359,7 @@ classdef CalibSetup < handle
                 temperature_ladder
                 start_temper = 1000;
             end
-            obj.tl = temperature_ladder;
+            obj.tl = reshape(temperature_ladder, 1, []);
             obj.itl = 1./obj.tl;
             obj.ntemps = length(obj.tl);
             obj.nswap_per = floor(obj.ntemps / 2);
@@ -321,14 +407,69 @@ classdef CalibSetup < handle
         end
 
         function obj = setHierPriors(obj, theta0_prior_mean, theta0_prior_cov, Sigma0_prior_df, Sigma0_prior_scale)
-            obj.theta0_prior_mean = theta0_prior_mean;
+            % Define hierarchical model hyperparameters, where
+            % theta_i ~ N(theta0, Sigma0), theta0 ~ N(theta0_prior_mean,
+            % theta0_prior_cov) and Sigma0 ~ InvWishart(Sigma0_prior_df,
+            % Sigma0_prior_scale). Everything is on the 0-1 scale. The prior
+            % mean of Sigma0 is Sigma0_prior_scale/(Sigma0_prior_df-p-1).
+            %
+            % theta0_prior_mean: 1 x p vector, usually 0.5*ones(1,p)
+            % theta0_prior_cov: p x p matrix
+            % Sigma0_prior_df: prior degrees of freedom (> p+1); larger
+            %                  values pull the theta_i toward theta0
+            % Sigma0_prior_scale: p x p prior scale; smaller values pull
+            %                     the theta_i toward theta0
+            %
+            % returns an object of class CalibSetup
+            arguments
+                obj
+                theta0_prior_mean
+                theta0_prior_cov
+                Sigma0_prior_df
+                Sigma0_prior_scale
+            end
+            if numel(theta0_prior_mean) ~= obj.p || ~isequal(size(theta0_prior_cov), [obj.p obj.p]) ...
+                    || ~isequal(size(Sigma0_prior_scale), [obj.p obj.p])
+                error('CalibSetup:setHierPriors:badSize', ...
+                      'theta0_prior_mean must have p elements and the matrices must be p x p');
+            end
+            if Sigma0_prior_df <= obj.p + 1
+                error('CalibSetup:setHierPriors:badDf', ...
+                      'Sigma0_prior_df must be greater than p+1 so the prior mean exists');
+            end
+            obj.theta0_prior_mean = reshape(theta0_prior_mean, 1, []);
             obj.theta0_prior_cov = theta0_prior_cov;
             obj.Sigma0_prior_df = Sigma0_prior_df;
             obj.Sigma0_prior_scale = Sigma0_prior_scale;
         end
 
-        function obj = setClusterPriors(obj, nclustmax)
+        function obj = setClusterPriors(obj, nclustmax, eta_prior_shape, eta_prior_rate, scale_proposal)
+            % Define clustered calibration hyperparameters. The Dirichlet
+            % process concentration eta ~ Gamma(eta_prior_shape,
+            % eta_prior_rate), so E(eta) = shape/rate; larger values favor
+            % more clusters. Clustered calibration also uses the
+            % hierarchical priors from setHierPriors.
+            %
+            % nclustmax: maximum number of clusters (default:
+            %            max(sum(ntheta),10))
+            % eta_prior_shape: gamma shape (default: 2)
+            % eta_prior_rate: gamma rate (default: 0.1)
+            % scale_proposal: divide each cluster's proposal covariance by
+            %                 its number of members, which can help when
+            %                 cluster sizes are very uneven (default: false)
+            %
+            % returns an object of class CalibSetup
+            arguments
+                obj
+                nclustmax = max(sum(obj.ntheta), 10);
+                eta_prior_shape = 2;
+                eta_prior_rate = 0.1;
+                scale_proposal = false;
+            end
             obj.nclustmax = nclustmax;
+            obj.eta_prior_shape = eta_prior_shape;
+            obj.eta_prior_rate = eta_prior_rate;
+            obj.scale_proposal = scale_proposal;
         end
     end
 end

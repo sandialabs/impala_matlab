@@ -90,7 +90,9 @@ classdef ModelmvBayes_mf < handle
         function discrep_vars = discrep_sample(obj, yobs, pred, cov, itemp)
             S = eye(obj.nd) ./ obj.discrep_tau + obj.D'*cov.inv*obj.D;
             m = obj.D' * cov.inv * (yobs-pred)';
-            discrep_vars = chol_sample(S\m, S./itemp);
+            Sinv = inv(S);
+            Sinv = (Sinv + Sinv')/2;
+            discrep_vars = chol_sample(Sinv*m, Sinv./itemp);
         end
 
         function pred = eval(obj, parmat, pool, nugget)
@@ -106,22 +108,23 @@ classdef ModelmvBayes_mf < handle
             for i = 1:numel(fn)
                 parmat_array(:,i) = parmat.(fn{i});
             end
-            if pool
-                pred = obj.model.predict(parmat_array, 'idxSamples', obj.ii);
-                pred = squeeze(pred);
-                if size(pred,2) == 1
-                    pred = pred';
+            pred = obj.model.predict(parmat_array, 'idxSamples', obj.ii);
+            pred = squeeze(pred);
+            if size(pred,2) == 1
+                pred = pred';
+            end
+            for i = 1:length(obj.mod_corr)
+                pred1 = obj.mod_corr{i}.predict(parmat_array, 'idxSamples', obj.ii);
+                pred1 = squeeze(pred1);
+                if size(pred1,2) == 1
+                    pred1 = pred1';
                 end
-                for i = 1:length(obj.mod_corr)
-                    pred1 = obj.mod_corr{i}.predict(parmat_array, 'idxSamples', obj.ii);
-                    pred1 = squeeze(pred1);
-                    if size(pred1,2) == 1
-                        pred1 = pred1';
-                    end
-                    pred = pred + pred1;
-                end
-            else
-                keyboard
+                pred = pred + pred1;
+            end
+            % some predict methods drop the singleton dimension for a single row
+            pred = reshape(pred, size(parmat_array,1), []);
+            if ~pool
+                pred = unpool_pred(pred, obj.exp_ind);
             end
 
         end
@@ -131,10 +134,17 @@ classdef ModelmvBayes_mf < handle
             out = -0.5*(cov.ldet + vec'*cov.inv*vec);
         end
 
-        function out = lik_cov_inv(obj, s2vec)
-            n = length(s2vec);
-            Sigma = cor2cov(obj.meas_error_cor(1:n,1:n), sqrt(s2vec));
-            mat = Sigma + obj.trunc_error_cov + obj.discrep_cov + obj.basis * diag(obj.emu_vars) * obj.basis';
+        function out = lik_cov_inv(obj, s2vec, inds)
+            % inds: indices of the observations s2vec refers to (default:
+            %       all), used by hierarchical/clustered calibration
+            arguments
+                obj
+                s2vec
+                inds = 1:numel(s2vec);
+            end
+            Sigma = cor2cov(obj.meas_error_cor(inds,inds), sqrt(s2vec(:)));
+            B = obj.basis(inds,:);
+            mat = Sigma + obj.trunc_error_cov(inds,inds) + obj.discrep_cov(inds,inds) + B * diag(obj.emu_vars) * B';
             try
                 R = chol(mat);
             catch
