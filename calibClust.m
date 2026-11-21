@@ -372,12 +372,12 @@ out.theta0_native = tran_unif(reshape(theta0(:,1,:), nmcmc, p), setup.bounds_mat
 
     function c = lik_cov(i, ls2_row, j)
         ob = obs{i}{j};
-        c = setup.models{i}.lik_cov_inv(exp(ls2_row(setup.s2_ind{i}(ob))), ob);
+        c = setup.models{i}.lik_cov_inv(exp(ls2_row(setup.s2_ind{i}(ob))), ob, setup.wt{i}(ob));
     end
 
     function v = llik_tj(i, pred_row, j, c)
         ob = obs{i}{j};
-        v = setup.models{i}.llik(setup.ys{i}(ob), pred_row(ob), c);
+        v = setup.models{i}.llik(setup.ys{i}(ob), pred_row(ob), c, setup.wt{i}(ob));
     end
 
     function refresh_llik_delta(i, which)
@@ -416,7 +416,7 @@ out.theta0_native = tran_unif(reshape(theta0(:,1,:), nmcmc, p), setup.bounds_mat
                 case {'gibbs', 'gibbs_trunc'}
                     changed_s2(ii) = true;
                     trunc = strcmp(mdl.s2, 'gibbs_trunc');
-                    dev_sq = (setup.ys{ii} - pred_curr_theta{ii}).^2 * s2_ind_mat{ii};
+                    dev_sq = (setup.wt{ii} .* (setup.ys{ii} - pred_curr_theta{ii}).^2) * s2_ind_mat{ii};
                     for t2 = 1:nt
                         ls2_curr{ii}(t2,:) = draw_s2_gibbs(dev_sq(t2,:), setup, ii, itl(t2), trunc);
                         for j2 = 1:nth

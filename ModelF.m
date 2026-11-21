@@ -73,21 +73,45 @@ classdef ModelF < handle
             end
         end
 
-        function out = llik(~, yobs, pred, cov)
+        function out = llik(~, yobs, pred, cov, wt)
+            % wt: observation weights (default: all ones)
+            arguments
+                ~
+                yobs
+                pred
+                cov
+                wt = ones(1, numel(yobs));
+            end
             vec = yobs(:) - pred(:);
-            out = -0.5*cov.ldet - 0.5*sum(vec.^2 .* cov.inv(:));
+            out = -0.5*cov.ldet - 0.5*sum(wt(:) .* vec.^2 .* cov.inv(:));
         end
 
-        function out = lik_cov_inv(~, s2vec, ~)
+        function out = lik_cov_inv(~, s2vec, ~, wt)
             % diagonal covariance; the optional third argument (observation
-            % indices) is not needed here
+            % indices) is not needed here. wt: observation weights (default:
+            % all ones), which scale each observation's log-variance term
+            arguments
+                ~
+                s2vec
+                ~
+                wt = ones(1, numel(s2vec));
+            end
             out.inv = 1 ./ s2vec(:);
-            out.ldet = sum(log(s2vec(:)));
+            out.ldet = sum(wt(:) .* log(s2vec(:)));
         end
 
-        function discrep_vars = discrep_sample(obj, yobs, pred, cov, itemp)
-            S = eye(obj.nd) ./ obj.discrep_tau + obj.D' * (cov.inv(:) .* obj.D);
-            m = obj.D' * (cov.inv(:) .* (yobs(:) - pred(:)));
+        function discrep_vars = discrep_sample(obj, yobs, pred, cov, itemp, wt)
+            arguments
+                obj
+                yobs
+                pred
+                cov
+                itemp
+                wt = ones(1, numel(yobs));
+            end
+            winv = wt(:) .* cov.inv(:);
+            S = eye(obj.nd) ./ obj.discrep_tau + obj.D' * (winv .* obj.D);
+            m = obj.D' * (winv .* (yobs(:) - pred(:)));
             Sinv = inv(S);
             Sinv = (Sinv + Sinv')/2;
             discrep_vars = chol_sample(Sinv*m, Sinv./itemp);

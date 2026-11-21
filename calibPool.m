@@ -75,8 +75,8 @@ for i = 1:nexp
     discrep_curr{i} = zeros(size(pred_curr{i}));
     discrep_vars{i} = zeros(setup.nmcmc, nt, setup.models{i}.nd);
     for t = 1:nt
-        marg_lik_cov_cur{i}{t} = setup.models{i}.lik_cov_inv(exp(ls2_curr{i}(t, setup.s2_ind{i})));
-        llik_curr(i,t) = setup.models{i}.llik(setup.ys{i}, pred_curr{i}(t,:), marg_lik_cov_cur{i}{t});
+        marg_lik_cov_cur{i}{t} = setup.models{i}.lik_cov_inv(exp(ls2_curr{i}(t, setup.s2_ind{i})), 1:setup.y_lens{i}, setup.wt{i});
+        llik_curr(i,t) = setup.models{i}.llik(setup.ys{i}, pred_curr{i}(t,:), marg_lik_cov_cur{i}{t}, setup.wt{i});
     end
 end
 
@@ -102,7 +102,7 @@ for m = 2:setup.nmcmc
     for i = 1:nexp
         if setup.models{i}.nd > 0
             for t = 1:nt
-                dv = setup.models{i}.discrep_sample(setup.ys{i}, pred_curr{i}(t,:), marg_lik_cov_cur{i}{t}, itl(t));
+                dv = setup.models{i}.discrep_sample(setup.ys{i}, pred_curr{i}(t,:), marg_lik_cov_cur{i}{t}, itl(t), setup.wt{i});
                 discrep_vars{i}(m,t,:) = reshape(dv, 1, 1, []);
                 discrep_curr{i}(t,:) = (setup.models{i}.D * dv(:))';
             end
@@ -114,7 +114,7 @@ for m = 2:setup.nmcmc
         end
         if setup.models{i}.nd > 0 || setup.models{i}.stochastic
             for t = 1:nt
-                llik_curr(i,t) = setup.models{i}.llik(setup.ys{i}-discrep_curr{i}(t,:), pred_curr{i}(t,:), marg_lik_cov_cur{i}{t});
+                llik_curr(i,t) = setup.models{i}.llik(setup.ys{i}-discrep_curr{i}(t,:), pred_curr{i}(t,:), marg_lik_cov_cur{i}{t}, setup.wt{i});
             end
         end
     end
@@ -158,11 +158,11 @@ for m = 2:setup.nmcmc
         switch mdl.s2
             case {'gibbs', 'gibbs_trunc'}
                 trunc = strcmp(mdl.s2, 'gibbs_trunc');
-                dev_sq = (setup.ys{i} - discrep_curr{i} - pred_curr{i}).^2 * s2_ind_mat{i};
+                dev_sq = (setup.wt{i} .* (setup.ys{i} - discrep_curr{i} - pred_curr{i}).^2) * s2_ind_mat{i};
                 for t = 1:nt
                     ls2_curr{i}(t,:) = draw_s2_gibbs(dev_sq(t,:), setup, i, itl(t), trunc);
-                    marg_lik_cov_cur{i}{t} = mdl.lik_cov_inv(exp(ls2_curr{i}(t, setup.s2_ind{i})));
-                    llik_curr(i,t) = mdl.llik(setup.ys{i}-discrep_curr{i}(t,:), pred_curr{i}(t,:), marg_lik_cov_cur{i}{t});
+                    marg_lik_cov_cur{i}{t} = mdl.lik_cov_inv(exp(ls2_curr{i}(t, setup.s2_ind{i})), 1:setup.y_lens{i}, setup.wt{i});
+                    llik_curr(i,t) = mdl.llik(setup.ys{i}-discrep_curr{i}(t,:), pred_curr{i}(t,:), marg_lik_cov_cur{i}{t}, setup.wt{i});
                 end
 
             case 'fix'
@@ -176,8 +176,8 @@ for m = 2:setup.nmcmc
                 llik_candi = zeros(1,nt);
                 marg_lik_cov_candi = cell(1, nt);
                 for t = 1:nt
-                    marg_lik_cov_candi{t} = mdl.lik_cov_inv(exp(ls2_cand(t, setup.s2_ind{i})));
-                    llik_candi(t) = mdl.llik(setup.ys{i}-discrep_curr{i}(t,:), pred_curr{i}(t,:), marg_lik_cov_candi{t});
+                    marg_lik_cov_candi{t} = mdl.lik_cov_inv(exp(ls2_cand(t, setup.s2_ind{i})), 1:setup.y_lens{i}, setup.wt{i});
+                    llik_candi(t) = mdl.llik(setup.ys{i}-discrep_curr{i}(t,:), pred_curr{i}(t,:), marg_lik_cov_candi{t}, setup.wt{i});
                 end
 
                 kern = setup.s2_prior_kern{i};
@@ -279,7 +279,7 @@ out.theta_native = theta_native;
                 pred_cand{ii}(good_values,:) = setup.models{ii}.eval(tg, true);
                 for tk = find(good_values)
                     llik_cand(ii,tk) = setup.models{ii}.llik(setup.ys{ii}-discrep_curr{ii}(tk,:), ...
-                        pred_cand{ii}(tk,:), marg_lik_cov_cur{ii}{tk});
+                        pred_cand{ii}(tk,:), marg_lik_cov_cur{ii}{tk}, setup.wt{ii});
                 end
             end
         end

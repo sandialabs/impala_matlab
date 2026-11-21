@@ -44,6 +44,7 @@ classdef CalibSetup < handle
         eta_prior_shape
         eta_prior_rate
         scale_proposal
+        wt  % cell array of observation weights, one vector per experiment
         sd_lower  % lower bounds on the error sd (only used with 'gibbs_trunc')
         sd_upper  % upper bounds on the error sd (only used with 'gibbs_trunc')
         theta0_start  % optional ntemps x p start for theta0 (0-1 scale)
@@ -105,6 +106,7 @@ classdef CalibSetup < handle
             obj.s2_prior_kern = {};
             obj.sd_lower = {};
             obj.sd_upper = {};
+            obj.wt = {};
             obj.theta_prior = {};
             obj.start_var_theta = 1e-8;
             obj.start_tau_theta = 0;
@@ -210,7 +212,7 @@ classdef CalibSetup < handle
                                             'log_density_fn', log_density_fn);
         end
 
-        function obj = addVecExperiments(obj, yobs, model, sd_est, s2_df, s2_ind, meas_error_cor, theta_ind, D, discrep_tau, sd_lower, sd_upper)
+        function obj = addVecExperiments(obj, yobs, model, sd_est, s2_df, s2_ind, meas_error_cor, theta_ind, D, discrep_tau, sd_lower, sd_upper, wt)
             % This method adds vector experiments to calibration object
             %
             % yobs: a vector of the experiment or observation
@@ -231,6 +233,10 @@ classdef CalibSetup < handle
             % discrep_tau: discrepency sampling tau
             % sd_lower, sd_upper: bounds on the error sd, one per error
             %                     group, used when model.s2 is 'gibbs_trunc'
+            % wt: positive weight of each element of yobs (default: all
+            %     ones). A weight acts like a fractional number of
+            %     replicates: it scales that observation's squared residual
+            %     and its log-variance term in the likelihood.
             % returns an object of class CalibSetup
             arguments
                 obj
@@ -245,6 +251,7 @@ classdef CalibSetup < handle
                 discrep_tau=1;
                 sd_lower=[];
                 sd_upper=[];
+                wt=[];
             end
 
             n = length(yobs);
@@ -265,6 +272,17 @@ classdef CalibSetup < handle
             if any(s2_ind < 1) || any(s2_ind > ns2) || any(s2_ind ~= round(s2_ind))
                 error('CalibSetup:addVecExperiments:badS2Ind', ...
                       's2_ind must take integer values between 1 and length(sd_est)');
+            end
+            if isempty(wt)
+                wt = ones(1, n);
+            end
+            wt = reshape(double(wt), 1, []);
+            if isscalar(wt) && n > 1
+                wt = repmat(wt, 1, n);
+            end
+            if length(wt) ~= n || any(~isfinite(wt)) || any(wt <= 0)
+                error('CalibSetup:addVecExperiments:badWt', ...
+                      'wt must have one positive weight per element of yobs');
             end
             s2_df = reshape(s2_df, 1, []);
             if isscalar(s2_df)
@@ -326,6 +344,7 @@ classdef CalibSetup < handle
             obj.models{end+1} = model;
             obj.nexp = obj.nexp + 1;
             obj.sd_est{end+1} = sd_est;
+            obj.wt{end+1} = wt;
             obj.sd_lower{end+1} = sd_lower;
             obj.sd_upper{end+1} = sd_upper;
             obj.s2_df{end+1} = s2_df;
@@ -334,9 +353,11 @@ classdef CalibSetup < handle
             obj.s2_ind{end+1} = s2_ind;
             obj.s2_exp_ind{end+1} = 1:ns2;
             obj.ns2{end+1} = ns2;
+            % (weighted) number of observations in each error group, used by
+            % the Gibbs update of s2; equals the count when all weights are 1
             vec = zeros(1, ns2);
             for i = 1:ns2
-                vec(i) = sum(s2_ind==i);
+                vec(i) = sum(wt(s2_ind==i));
             end
             obj.ny_s2{end+1} = vec;
             obj.nclustmax = max(sum(obj.ntheta),10);

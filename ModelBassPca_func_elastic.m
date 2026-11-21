@@ -98,9 +98,20 @@ classdef ModelBassPca_func_elastic < handle
 			obj.emu_warp_vars = obj.mod_warp_s2(obj.ii,:);
         end
 
-        function discrep_vars = discrep_sample(obj, yobs, pred, cov, itemp)
-            S = eye(obj.nd) ./ obj.discrep_tau + obj.D'*cov.inv*obj.D;
-            m = obj.D' * cov.inv * (yobs-pred)';
+        function discrep_vars = discrep_sample(obj, yobs, pred, cov, itemp, wt)
+            % wt: observation weights (default: all ones)
+            arguments
+                obj
+                yobs
+                pred
+                cov
+                itemp
+                wt = ones(1, numel(yobs));
+            end
+            sw = sqrt(wt(:));
+            Winv = sw .* cov.inv .* sw';
+            S = eye(obj.nd) ./ obj.discrep_tau + obj.D'*Winv*obj.D;
+            m = obj.D' * Winv * (yobs(:)-pred(:));
             Sinv = inv(S);
             Sinv = (Sinv + Sinv')/2;
             discrep_vars = chol_sample(Sinv*m, Sinv./itemp);
@@ -134,22 +145,34 @@ classdef ModelBassPca_func_elastic < handle
 
         end
 
-        function out = llik(~, yobs, pred, cov)
-            vec = yobs(:) - pred(:);
+        function out = llik(~, yobs, pred, cov, wt)
+            % wt: observation weights (default: all ones); residuals are
+            %     scaled by sqrt(wt)
+            arguments
+                ~
+                yobs
+                pred
+                cov
+                wt = ones(1, numel(yobs));
+            end
+            vec = sqrt(wt(:)) .* (yobs(:) - pred(:));
             out = -0.5*(cov.ldet + vec'*cov.inv*vec);
         end
         
-        function out = lik_cov_inv(obj, s2vec, inds)
+        function out = lik_cov_inv(obj, s2vec, inds, wt)
             % inds: indices of the observations s2vec refers to (default:
             %       all), used by hierarchical/clustered calibration
+            % wt: weights of those observations (default: all ones); each
+            %     observation's log-determinant term is scaled by its weight
             arguments
                 obj
                 s2vec
                 inds = 1:numel(s2vec);
+                wt = ones(1, numel(s2vec));
             end
             vec = obj.trunc_error_var(inds) + s2vec(:);
             Ainv = diag(1./vec);
-            Aldet = sum(log(vec));
+            Aldet = sum(wt(:) .* log(vec));
             B = obj.basis(inds,:);
             out = obj.swm(Ainv, B, diag(1./obj.emu_vars), B', Aldet, sum(log(obj.emu_vars)));
         end
