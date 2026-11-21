@@ -12,6 +12,12 @@ function out = calibClust(setup)
 %
 % Priors added with addThetaPrior/addJointThetaPrior are not used here.
 %
+% Only the likelihood (and the s2 prior) is tempered, as in power
+% posteriors (Friel & Pettitt 2008): each chain targets
+%   p(theta0) p(Sigma0) p(eta) p(delta | eta) prod_k N(theta_k | theta0,
+%   Sigma0) * [p(s2) L]^itl,
+% so the clustering prior cancels in the tempering swap ratio.
+%
 % setup: an object of class CalibSetup
 %
 % returns a struct with the following fields
@@ -32,6 +38,11 @@ function out = calibClust(setup)
 % llik: log likelihood at temperature 1
 % theta_hist_native: cell, theta_hist at temperature 1 on the native scale
 % theta0_native: theta0 at temperature 1 on the native scale
+% temperature_ladder: inverse temperatures actually used (after any
+%                     ladder adaptation, see setTemperatureLadder)
+% swap_rejection: estimated swap rejection rate on each adjacent pair of
+%                 temperatures (since the last ladder adaptation)
+% round_trips: number of cold -> hot -> cold replica round trips
 arguments
     setup CalibSetup
 end
@@ -51,7 +62,10 @@ p = setup.p;
 nexp = setup.nexp;
 nmcmc = setup.nmcmc;
 K = setup.nclustmax;
-itl = reshape(setup.itl, 1, []);
+% working copy of the inverse-temperature ladder; adapted during burn-in
+% when setup.adapt_ladder is true (see SwapScheduler)
+sched = setup.makeSwapScheduler();
+itl = sched.itl;
 ntheta = setup.ntheta;
 Ntheta = sum(ntheta);
 
@@ -67,7 +81,6 @@ end
 
 theta0_prior_mean = setup.theta0_prior_mean;
 theta0_prior_prec = inv(setup.theta0_prior_cov);
-theta0_prior_ldet = logdet(setup.theta0_prior_cov);
 Sigma0_prior_df = setup.Sigma0_prior_df;
 Sigma0_prior_scale = setup.Sigma0_prior_scale;
 
@@ -191,16 +204,18 @@ for m = 2:nmcmc
     % update s2
     s2_changed = update_s2(m);
 
-    % Gibbs update of theta0 (truncated to satisfy the constraints)
+    % Gibbs update of theta0 (truncated to satisfy the constraints). Only
+    % the likelihood is tempered: the normal density of the cluster centres
+    % around theta0 enters at full strength in every chain.
     means0 = zeros(nt, p);
     covs0 = zeros(nt, p, p);
     for t = 1:nt
         Sinv = reshape(Sig0_inv(t,:,:), p, p);
         thext = reshape(thc(t, ext(t,:), :), nclust(t), p);
         tbar = mean(thext, 1);
-        cc = inv(nclust(t) * itl(t) * Sinv + theta0_prior_prec);
+        cc = inv(nclust(t) * Sinv + theta0_prior_prec);
         cc = (cc + cc')/2;
-        dd = itl(t) * nclust(t) * Sinv * tbar' + theta0_prior_prec * theta0_prior_mean';
+        dd = nclust(t) * Sinv * tbar' + theta0_prior_prec * theta0_prior_mean';
         means0(t,:) = (cc * dd)';
         covs0(t,:,:) = cc;
     end
@@ -209,8 +224,8 @@ for m = 2:nmcmc
     % Gibbs update of Sigma0 (occupied clusters only)
     for t = 1:nt
         d = reshape(thc(t, ext(t,:), :), nclust(t), p) - th0(t,:);
-        sc = Sigma0_prior_scale + itl(t) * (d' * d);
-        Sig0(t,:,:) = iwishrnd((sc + sc')/2, Sigma0_prior_df + nclust(t) * itl(t));
+        sc = Sigma0_prior_scale + d' * d;
+        Sig0(t,:,:) = iwishrnd((sc + sc')/2, Sigma0_prior_df + nclust(t));
     end
     [Sig0_inv, Sig0_ldet] = inv_ldet(Sig0);
 
@@ -251,9 +266,10 @@ for m = 2:nmcmc
         end
     end
     alpha = -Inf(nt, K);
-    lr = itl(:) .* (llik_cand_cl - llik_curr_cl ...
+    % only the likelihood is tempered
+    lr = itl(:) .* (llik_cand_cl - llik_curr_cl) ...
         + mvn_logpdf_batch(th_eval, th0, Sig0_inv, Sig0_ldet) ...
-        - mvn_logpdf_batch(thc, th0, Sig0_inv, Sig0_ldet));
+        - mvn_logpdf_batch(thc, th0, Sig0_inv, Sig0_ldet);
     alpha(good) = lr(good);
     acc = log(rand(nt, K)) < alpha;
     changed = acc | ~ext;
@@ -277,12 +293,17 @@ for m = 2:nmcmc
     % tempering swaps
     if m > setup.start_temper && nt > 1
         for kk = 1:setup.nswap
-            sw = reshape(randperm(nt, 2*setup.nswap_per), 2, setup.nswap_per);
-            dtl = itl(sw(2,:)) - itl(sw(1,:));
+            sw = sched.pairs();
+            if isempty(sw)
+                continue
+            end
+            dtl = itl(sw(:,2)') - itl(sw(:,1)');
             lp = temper_logpost();
-            sw_alpha = dtl .* (lp(sw(1,:)) - lp(sw(2,:)));
-            for tti = find(log(rand(1, setup.nswap_per)) < sw_alpha)
-                tt = sw(:, tti);
+            sw_alpha = dtl .* (lp(sw(:,1)') - lp(sw(:,2)'));
+            accepted = log(rand(1, size(sw, 1))) < sw_alpha;
+            sched.record(sw, sw_alpha, accepted);
+            for tti = find(accepted)
+                tt = sw(tti,:)';
                 rev = tt([2 1]);
                 count_temper(tt(1), tt(2)) = count_temper(tt(1), tt(2)) + 1;
                 thc(tt,:,:) = thc(rev,:,:);
@@ -303,6 +324,9 @@ for m = 2:nmcmc
                     llik_curr_theta{i}(tt,:) = llik_curr_theta{i}(rev,:);
                 end
             end
+        end
+        if sched.maybe_adapt(m)
+            itl = sched.itl;  % ladder changed
         end
     end
 
@@ -339,6 +363,9 @@ out.theta_am = cov_theta_cand;
 out.llik = llik;
 out.theta_hist_native = theta_hist_native;
 out.theta0_native = tran_unif(reshape(theta0(:,1,:), nmcmc, p), setup.bounds_mat, names);
+out.temperature_ladder = sched.itl;
+out.swap_rejection = sched.rejection_rates();
+out.round_trips = sched.round_trips;
 
     % ---------------------------------------------------------------------
     % nested helpers (share the sampler state)
@@ -454,18 +481,15 @@ out.theta0_native = tran_unif(reshape(theta0(:,1,:), nmcmc, p), setup.bounds_mat
         end
     end
 
-    function v = mvn_prior0(x)
-        dd0 = x - theta0_prior_mean;
-        v = -0.5*p*log(2*pi) - 0.5*theta0_prior_ldet - 0.5*sum((dd0*theta0_prior_prec).*dd0, 2);
-    end
-
     function lp = temper_logpost()
-        % tempered part of the log posterior at each temperature (1 x ntemps)
-        lp = (mvn_prior0(th0) + invwishart_logpdf(Sig0, Sigma0_prior_df, Sigma0_prior_scale) ...
-            + gamma_logpdf(eta_curr, setup.eta_prior_shape, setup.eta_prior_rate))';
-        lp = lp + sum(mvn_logpdf_batch(thc, th0, Sig0_inv, Sig0_ldet) .* ext, 2)';
+        % tempered part of the log posterior at each temperature (1 x
+        % ntemps): the likelihood and the s2 prior. The clustering prior
+        % (p(theta0), p(Sigma0), p(eta), p(delta | eta) and the normal
+        % density of the cluster centres) is the same in every chain, so it
+        % cancels in the swap ratio.
+        lp = zeros(1, nt);
         for ii = 1:nexp
-            kern = setup.s2_prior_kern{ii};
+            kern = s2_swap_kern(setup, ii);
             lp = lp + sum(kern(exp(ls2_curr{ii}), setup.ig_a{ii}, setup.ig_b{ii}), 2)' ...
                 + sum(llik_curr_theta{ii}, 2)';
         end
