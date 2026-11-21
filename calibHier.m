@@ -422,9 +422,13 @@ out.round_trips = sched.round_trips;
                         end
                     end
                     kern = setup.s2_prior_kern{ii};
+                    % Jacobian of the random walk on log(s2): it comes from the change
+                    % of variables, not from the target, so it is not tempered; each
+                    % chain targets [p(s2) L]^itl in s2, as the Gibbs updates and the
+                    % swap ratio assume.
                     alpha_s2 = itl .* (sum(llik_candi, 2)' - sum(llik_curr{ii}, 2)') ...
-                        + itl .* (sum(kern(exp(ls2_cand), setup.ig_a{ii}, setup.ig_b{ii}), 2)' + sum(ls2_cand, 2)') ...
-                        - itl .* (sum(kern(exp(ls2_curr{ii}), setup.ig_a{ii}, setup.ig_b{ii}), 2)' + sum(ls2_curr{ii}, 2)');
+                        + itl .* sum(kern(exp(ls2_cand), setup.ig_a{ii}, setup.ig_b{ii}), 2)' + sum(ls2_cand, 2)' ...
+                        - itl .* sum(kern(exp(ls2_curr{ii}), setup.ig_a{ii}, setup.ig_b{ii}), 2)' - sum(ls2_curr{ii}, 2)';
                     for t2 = find(log(rand(1, nt)) < alpha_s2)
                         count_s2(ii,t2) = count_s2(ii,t2) + 1;
                         llik_curr{ii}(t2,:) = llik_candi(t2,:);

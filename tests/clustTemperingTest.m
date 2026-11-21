@@ -60,6 +60,28 @@ tc.verifyLessThan(abs(mean(s2) / (b/(a-1)) - 1), 0.015);
 tc.verifyLessThan(abs(median(s2) / (b / gammaincinv(0.5, a, 'upper')) - 1), 0.015);
 end
 
+function testPooledMHS2WithTempering(tc)
+% s2 by Metropolis-Hastings on log(s2) with s2_df = 0 (kernel 1/(1 + s2))
+% and a model that does not depend on theta. The Jacobian of the log
+% transform must not be tempered, otherwise hot chains target a different
+% family than the swap ratio assumes and the cold chain is biased.
+rng(123);
+n = 20;
+y = 0.5*randn(1, n);
+SS = sum(y.^2);
+unnorm = @(s2) exp(-n/2*log(s2) - SS/2./s2 - log1p(s2) + 20);
+Z = integral(unnorm, 1e-4, 50);
+exact = integral(@(s) s .* unnorm(s), 1e-4, 50) / Z;
+rng(2);
+s = CalibSetup(struct('a', [0 1]));
+s.addVecExperiments(y, ModelF(@(X) zeros(size(X,1), n), {'a'}, NaN, 'MH'), 0.5, 0, ones(1, n));
+s.setTemperatureLadder(2.^(0:3), 200);
+s.setMCMC(20000, 0, 1, 100, 1e-8, 0, 0.1);
+evalc('o = calibPool(s);');
+s2 = o.s2{1}(3001:end, 1, 1);
+tc.verifyLessThan(abs(mean(s2) / exact - 1), 0.025);
+end
+
 function testClustTemperingFlatLikelihood(tc)
 % With a flat likelihood every chain's target is the clustering prior, so
 % the cold chain must reproduce the Gamma(2, 2) prior on eta (mean 1).

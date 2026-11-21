@@ -189,9 +189,13 @@ for m = 2:setup.nmcmc
                 end
 
                 kern = setup.s2_prior_kern{i};
+                % Jacobian of the random walk on log(s2): it comes from the change
+                % of variables, not from the target, so it is not tempered; each
+                % chain targets [p(s2) L]^itl in s2, as the Gibbs updates and the
+                % swap ratio assume.
                 alpha_s2 = itl .* (llik_candi - llik_curr(i,:)) ...
-                    + itl .* (sum(kern(exp(ls2_cand), setup.ig_a{i}, setup.ig_b{i}), 2)' + sum(ls2_cand, 2)') ...
-                    - itl .* (sum(kern(exp(ls2_curr{i}), setup.ig_a{i}, setup.ig_b{i}), 2)' + sum(ls2_curr{i}, 2)');
+                    + itl .* sum(kern(exp(ls2_cand), setup.ig_a{i}, setup.ig_b{i}), 2)' + sum(ls2_cand, 2)' ...
+                    - itl .* sum(kern(exp(ls2_curr{i}), setup.ig_a{i}, setup.ig_b{i}), 2)' - sum(ls2_curr{i}, 2)';
 
                 for t = find(log(rand(1,nt)) < alpha_s2)
                     count_s2(i, t) = count_s2(i, t) + 1;
