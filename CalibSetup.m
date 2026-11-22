@@ -30,6 +30,9 @@ classdef CalibSetup < handle
         theta_ind
         nswap
         nswap_per
+        swap_scheme  % 'deo' (default), 'seo' or 'random'; see SwapScheduler
+        adapt_ladder  % adapt the temperature ladder during burn-in
+        adapt_ladder_until  % last iteration at which the ladder may change
         start_temper
         s2_prior_kern
         start_var_theta
@@ -41,6 +44,7 @@ classdef CalibSetup < handle
         theta0_prior_cov
         Sigma0_prior_df
         Sigma0_prior_scale
+        hier_scale  % 'unit' (default) or 'probit'; see setHierPriors
         nclustmax
         eta_prior_shape
         eta_prior_rate
@@ -106,6 +110,9 @@ classdef CalibSetup < handle
             obj.theta_ind = {};
             obj.nswap = 5;
             obj.nswap_per = 0;
+            obj.swap_scheme = 'deo';
+            obj.adapt_ladder = false;
+            obj.adapt_ladder_until = [];
             obj.start_temper = 1000;
             obj.s2_prior_kern = {};
             obj.sd_lower = {};
@@ -121,6 +128,7 @@ classdef CalibSetup < handle
             obj.eta_prior_shape = 2;
             obj.eta_prior_rate = 0.1;
             obj.scale_proposal = false;
+            obj.hier_scale = 'unit';
         end
 
         function good = checkConstraints(obj, x, bounds, constants)
@@ -263,7 +271,11 @@ classdef CalibSetup < handle
             %        ModelF)
             % sd_est: estimate of standard deviation, one per error group
             % s2_df: degrees of freedom of inverse gamma prior (scalar or
-            %        one per error group); 0 uses a half-Cauchy prior
+            %        one per error group). s2_df = 0 gives an improper
+            %        prior: p(s2) proportional to 1/s2 when s2 is updated
+            %        by Gibbs sampling (model.s2 'gibbs' or 'gibbs_trunc'),
+            %        and a half-Cauchy-type kernel 1/(1 + s2) when it is
+            %        updated by Metropolis-Hastings (model.s2 'MH')
             % s2_ind: error group (1..length(sd_est)) of each element of yobs
             % meas_error_cor: measurement error correlation (default: NaN)
             % theta_ind: theta index of each element of yobs, used by
@@ -413,23 +425,64 @@ classdef CalibSetup < handle
             end
         end
 
-        function obj = setTemperatureLadder(obj, temperature_ladder, start_temper)
+        function obj = setTemperatureLadder(obj, temperature_ladder, start_temper, swap_scheme, adapt_ladder, adapt_ladder_until)
             % This function setups up temperature ladder for tempering
             %
-            % temperature_ladder: array of temperatures
+            % temperature_ladder: array of increasing temperatures, all
+            %                     at least 1, e.g. 1.05.^(0:19)
             % start_temper: what MCMC sample to start tempering (default:
             %               1000)
+            % swap_scheme: how swap pairs are chosen in each swap round.
+            %              'deo' (default) uses deterministic even/odd
+            %              swaps between adjacent temperatures
+            %              (non-reversible parallel tempering, Syed et al.
+            %              2022); 'seo' picks the even/odd parity at
+            %              random; 'random' reproduces the scheme of
+            %              earlier versions (random disjoint pairs from the
+            %              whole ladder)
+            % adapt_ladder: if true, re-space the temperatures during
+            %               burn-in so that the swap rejection rate is the
+            %               same between every pair of neighbouring
+            %               temperatures (Syed et al. 2022, Algorithm 4).
+            %               The coldest and hottest temperatures are kept
+            %               fixed. Experimental (default: false)
+            % adapt_ladder_until: last MCMC iteration at which the ladder
+            %                     may change (default: nburn from setMCMC
+            %                     if positive, otherwise floor(nmcmc/2)).
+            %                     Discard samples up to this iteration as
+            %                     burn-in. The adapted ladder is returned
+            %                     as temperature_ladder in the output.
             % returns an object of class CalibSetup
             arguments
                 obj
                 temperature_ladder
                 start_temper = 1000;
+                swap_scheme = 'deo';
+                adapt_ladder = false;
+                adapt_ladder_until = [];
             end
-            obj.tl = reshape(temperature_ladder, 1, []);
+            SwapScheduler.validate(swap_scheme, adapt_ladder);
+            obj.tl = reshape(double(temperature_ladder), 1, []);
             obj.itl = 1./obj.tl;
             obj.ntemps = length(obj.tl);
             obj.nswap_per = floor(obj.ntemps / 2);
             obj.start_temper = start_temper;
+            obj.swap_scheme = char(swap_scheme);
+            obj.adapt_ladder = logical(adapt_ladder);
+            obj.adapt_ladder_until = adapt_ladder_until;
+        end
+
+        function sched = makeSwapScheduler(obj)
+            % Create the SwapScheduler used by the samplers.
+            until = obj.adapt_ladder_until;
+            if isempty(until)
+                if obj.nburn > 0
+                    until = obj.nburn;
+                else
+                    until = floor(obj.nmcmc / 2);
+                end
+            end
+            sched = SwapScheduler(obj.itl, obj.swap_scheme, obj.adapt_ladder, until);
         end
 
         function obj = setMCMC(obj, nmcmc, nburn, thin, decor, start_var_theta, start_tau_theta, start_var_ls2, start_tau_ls2, start_adapt_iter)
@@ -472,19 +525,40 @@ classdef CalibSetup < handle
             obj.start_adapt_iter = start_adapt_iter;
         end
 
-        function obj = setHierPriors(obj, theta0_prior_mean, theta0_prior_cov, Sigma0_prior_df, Sigma0_prior_scale)
+        function obj = setHierPriors(obj, theta0_prior_mean, theta0_prior_cov, Sigma0_prior_df, Sigma0_prior_scale, scale)
             % Define hierarchical model hyperparameters, where
             % theta_i ~ N(theta0, Sigma0), theta0 ~ N(theta0_prior_mean,
             % theta0_prior_cov) and Sigma0 ~ InvWishart(Sigma0_prior_df,
-            % Sigma0_prior_scale). Everything is on the 0-1 scale. The prior
-            % mean of Sigma0 is Sigma0_prior_scale/(Sigma0_prior_df-p-1).
+            % Sigma0_prior_scale). The prior mean of Sigma0 is
+            % Sigma0_prior_scale/(Sigma0_prior_df-p-1).
             %
-            % theta0_prior_mean: 1 x p vector, usually 0.5*ones(1,p)
+            % theta0_prior_mean: 1 x p vector, usually 0.5*ones(1,p) on
+            %                    the 'unit' scale or zeros(1,p) on the
+            %                    'probit' scale
             % theta0_prior_cov: p x p matrix
             % Sigma0_prior_df: prior degrees of freedom (> p+1); larger
             %                  values pull the theta_i toward theta0
             % Sigma0_prior_scale: p x p prior scale; smaller values pull
             %                     the theta_i toward theta0
+            % scale: the scale of the hierarchical normal model (used by
+            %        calibHier).
+            %        'unit' (default, the behaviour of earlier versions):
+            %        theta_i, theta0 and Sigma0 live on the 0-1 scale and
+            %        theta_i is restricted to the bounds. The restriction is
+            %        applied without its normalising constant, so the
+            %        effective prior on (theta0, Sigma0) is the stated prior
+            %        times prod_i P(theta_i in bounds | theta0, Sigma0),
+            %        which favours small Sigma0 and theta0 away from the
+            %        bounds.
+            %        'probit': the hierarchy is placed on z = probit(u),
+            %        where u is the 0-1 scaled parameter, so z_i ~
+            %        N(theta0, Sigma0) is not truncated by the bounds and
+            %        the conjugate Gibbs updates are exact. The priors are
+            %        then on the probit scale (theta0 ~ N(0, I) makes each
+            %        component of theta0 uniform on [0, 1]). theta and
+            %        theta0 are still returned on the 0-1 scale; Sigma0 is
+            %        returned on the probit scale. Constraints other than
+            %        the bounds still truncate the hierarchical distribution.
             %
             % returns an object of class CalibSetup
             arguments
@@ -493,6 +567,11 @@ classdef CalibSetup < handle
                 theta0_prior_cov
                 Sigma0_prior_df
                 Sigma0_prior_scale
+                scale = 'unit';
+            end
+            if ~(ischar(scale) || isstring(scale)) || ~any(strcmp(scale, {'unit', 'probit'}))
+                error('CalibSetup:setHierPriors:badScale', ...
+                      'scale must be ''unit'' or ''probit''');
             end
             if numel(theta0_prior_mean) ~= obj.p || ~isequal(size(theta0_prior_cov), [obj.p obj.p]) ...
                     || ~isequal(size(Sigma0_prior_scale), [obj.p obj.p])
@@ -507,6 +586,35 @@ classdef CalibSetup < handle
             obj.theta0_prior_cov = theta0_prior_cov;
             obj.Sigma0_prior_df = Sigma0_prior_df;
             obj.Sigma0_prior_scale = Sigma0_prior_scale;
+            obj.hier_scale = char(scale);
+        end
+
+        function theta_new = sample_hier_parent(obj, theta0, Sigma0, maxiter)
+            % Draw parameters for a new experiment from the fitted
+            % hierarchical distribution, theta_new ~ N(theta0, Sigma0), one
+            % draw per row, on the scale set by setHierPriors.
+            %
+            % theta0: n x p theta0 samples on the 0-1 scale, as returned
+            %         in calibHier(...).theta0 (e.g. squeeze(out.theta0(:,1,:)))
+            % Sigma0: n x p x p Sigma0 samples, as returned by calibHier
+            % maxiter: maximum number of redraws (default 10000)
+            %
+            % returns an n x p matrix on the 0-1 scale
+            arguments
+                obj
+                theta0
+                Sigma0
+                maxiter = 10000;
+            end
+            n = size(theta0, 1);
+            p = size(theta0, 2);
+            Sigma0 = reshape(Sigma0, n, p, p);
+            if strcmp(obj.hier_scale, 'probit')
+                z = sample_constrained(probit(clip_unit(theta0)), Sigma0, obj, maxiter, @tran_probit);
+                theta_new = invprobit(z);
+            else
+                theta_new = sample_constrained(theta0, Sigma0, obj, maxiter);
+            end
         end
 
         function obj = setClusterPriors(obj, nclustmax, eta_prior_shape, eta_prior_rate, scale_proposal)

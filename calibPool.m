@@ -26,6 +26,11 @@ function out = calibPool(setup)
 % discrep_vars: discrepency coefficients
 % llik: log likelihood
 % theta_native: mcmc samples of variables in native scale
+% temperature_ladder: inverse temperatures actually used (after any
+%                     ladder adaptation, see setTemperatureLadder)
+% swap_rejection: estimated swap rejection rate on each adjacent pair of
+%                 temperatures (since the last ladder adaptation)
+% round_trips: number of cold -> hot -> cold replica round trips
 arguments
     setup CalibSetup
 end
@@ -34,7 +39,10 @@ names = fieldnames(setup.bounds);
 nt = setup.ntemps;
 p = setup.p;
 nexp = setup.nexp;
-itl = reshape(setup.itl, 1, []);
+% working copy of the inverse-temperature ladder; adapted during burn-in
+% when setup.adapt_ladder is true (see SwapScheduler)
+sched = setup.makeSwapScheduler();
+itl = sched.itl;
 
 theta = zeros(setup.nmcmc, nt, p);
 log_s2 = cell(1,nexp);
@@ -181,9 +189,13 @@ for m = 2:setup.nmcmc
                 end
 
                 kern = setup.s2_prior_kern{i};
+                % Jacobian of the random walk on log(s2): it comes from the change
+                % of variables, not from the target, so it is not tempered; each
+                % chain targets [p(s2) L]^itl in s2, as the Gibbs updates and the
+                % swap ratio assume.
                 alpha_s2 = itl .* (llik_candi - llik_curr(i,:)) ...
-                    + itl .* (sum(kern(exp(ls2_cand), setup.ig_a{i}, setup.ig_b{i}), 2)' + sum(ls2_cand, 2)') ...
-                    - itl .* (sum(kern(exp(ls2_curr{i}), setup.ig_a{i}, setup.ig_b{i}), 2)' + sum(ls2_curr{i}, 2)');
+                    + itl .* sum(kern(exp(ls2_cand), setup.ig_a{i}, setup.ig_b{i}), 2)' + sum(ls2_cand, 2)' ...
+                    - itl .* sum(kern(exp(ls2_curr{i}), setup.ig_a{i}, setup.ig_b{i}), 2)' - sum(ls2_curr{i}, 2)';
 
                 for t = find(log(rand(1,nt)) < alpha_s2)
                     count_s2(i, t) = count_s2(i, t) + 1;
@@ -200,25 +212,33 @@ for m = 2:setup.nmcmc
     % tempering swaps
     if m > setup.start_temper && nt > 1
         for k = 1:setup.nswap
-            sw = reshape(randperm(nt, 2*setup.nswap_per), 2, setup.nswap_per);
-            dtl = itl(sw(2,:)) - itl(sw(1,:));
-            sw_alpha = dtl .* (sum(llik_curr(:, sw(1,:)),1) - sum(llik_curr(:, sw(2,:)),1) ...
-                + lpr_curr(sw(1,:)) - lpr_curr(sw(2,:)));
+            sw = sched.pairs();
+            if isempty(sw)
+                continue
+            end
+            s1 = sw(:,1)';
+            s2s = sw(:,2)';
+            dtl = itl(s2s) - itl(s1);
+            sw_alpha = dtl .* (sum(llik_curr(:, s1),1) - sum(llik_curr(:, s2s),1) ...
+                + lpr_curr(s1) - lpr_curr(s2s));
             for i = 1:nexp
-                kern = setup.s2_prior_kern{i};
+                % s2 prior kernel targeted by the within-chain s2 update
+                kern = s2_swap_kern(setup, i);
                 sw_alpha = sw_alpha + dtl .* ...
-                    (sum(kern(exp(ls2_curr{i}(sw(1,:),:)), setup.ig_a{i}, setup.ig_b{i}), 2)' - ...
-                     sum(kern(exp(ls2_curr{i}(sw(2,:),:)), setup.ig_a{i}, setup.ig_b{i}), 2)');
+                    (sum(kern(exp(ls2_curr{i}(s1,:)), setup.ig_a{i}, setup.ig_b{i}), 2)' - ...
+                     sum(kern(exp(ls2_curr{i}(s2s,:)), setup.ig_a{i}, setup.ig_b{i}), 2)');
                 if setup.models{i}.nd > 0
                     nd = setup.models{i}.nd;
-                    dv1 = reshape(discrep_vars{i}(m, sw(1,:), :), [], nd);
-                    dv2 = reshape(discrep_vars{i}(m, sw(2,:), :), [], nd);
+                    dv1 = reshape(discrep_vars{i}(m, s1, :), [], nd);
+                    dv2 = reshape(discrep_vars{i}(m, s2s, :), [], nd);
                     sw_alpha = sw_alpha + dtl .* ...
                         (-0.5 * sum(dv1.^2, 2)' + 0.5 * sum(dv2.^2, 2)') ./ setup.models{i}.discrep_tau;
                 end
             end
-            for tti = find(log(rand(1,setup.nswap_per)) < sw_alpha)
-                tt = sw(:,tti);
+            accepted = log(rand(1, numel(s1))) < sw_alpha;
+            sched.record(sw, sw_alpha, accepted);
+            for tti = find(accepted)
+                tt = sw(tti,:)';
                 rev = tt([2 1]);
                 for i = 1:nexp
                     ls2_curr{i}(tt,:) = ls2_curr{i}(rev,:);
@@ -234,6 +254,9 @@ for m = 2:setup.nmcmc
                 th(tt,:) = th(rev,:);
                 lpr_curr(tt) = lpr_curr(rev);
             end
+        end
+        if sched.maybe_adapt(m)
+            itl = sched.itl;  % ladder changed
         end
     end
 
@@ -264,6 +287,9 @@ out.pred_curr = pred_curr;
 out.discrep_vars = discrep_vars;
 out.llik = llik;
 out.theta_native = theta_native;
+out.temperature_ladder = sched.itl;
+out.swap_rejection = sched.rejection_rates();
+out.round_trips = sched.round_trips;
 
     function [acc, llik_cand, pred_cand, lpr_cand] = mh_theta(theta_cand)
         % Metropolis accept/reject of an ntemps x p candidate for theta

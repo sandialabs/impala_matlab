@@ -10,7 +10,10 @@ nclust = nclust(:);
 g = betarnd(curr_eta + 1, ndat);
 aa = prior_shape + nclust;
 bb = prior_rate - log(g);
+% Escobar & West (1995), eq. 13: mixture of Gamma(a + k, b - log g) with
+% probability w and Gamma(a + k - 1, b - log g) with probability 1 - w,
+% where w / (1 - w) = (a + k - 1) / (n (b - log g)).
 w = (aa - 1) ./ (ndat .* bb + aa - 1);
-shape = aa - (rand(size(aa)) >= w);
+shape = aa - (rand(size(aa)) >= w);  % a + k with probability w
 eta = gamrnd(shape, 1 ./ bb);
 end
