@@ -11,7 +11,8 @@ classdef CalibSetup < handle
         bounds  % should be a struct so we can use parameter names
         bounds_mat
         p
-        checkConstraints
+        constraint_func  % constraint function, see checkConstraints
+        constants  % constants of the first model (if it has any), passed to constraint_func
         nmcmc
         nburn
         thin
@@ -63,7 +64,9 @@ classdef CalibSetup < handle
             %         and second element is upper bound.
             % constraint_func: function handle to constraint function on 
             %                  variables. Defaults to function on checking 
-            %                  bounds
+            %                  bounds. It is called as f(x, bounds), or as
+            %                  f(x, bounds, constants) if it takes three
+            %                  or more inputs (e.g. @constraints_ptw)
             % returns an object of class CalibSetup
             arguments
                 bounds
@@ -84,7 +87,8 @@ classdef CalibSetup < handle
                 bmattmp(i,:) = bounds.(fn{i});
             end
             obj.bounds_mat = bmattmp;
-            obj.checkConstraints = constraint_func;
+            obj.constraint_func = constraint_func;
+            obj.constants = [];
             obj.nmcmc = 10000;
             obj.nburn = 5000;
             obj.thin = 5;
@@ -117,6 +121,27 @@ classdef CalibSetup < handle
             obj.eta_prior_shape = 2;
             obj.eta_prior_rate = 0.1;
             obj.scale_proposal = false;
+        end
+
+        function good = checkConstraints(obj, x, bounds, constants)
+            % Calls the constraint function on the parameter struct x.
+            %
+            % bounds: overrides obj.bounds (optional)
+            % constants: overrides obj.constants (optional); only passed to
+            %            constraint functions taking three or more inputs
+            arguments
+                obj
+                x
+                bounds = obj.bounds;
+                constants = obj.constants;
+            end
+            f = obj.constraint_func;
+            n = nargin(f);
+            if n < 0 || n >= 3
+                good = f(x, bounds, constants);
+            else
+                good = f(x, bounds);
+            end
         end
 
         function obj = addThetaPrior(obj, dist, params, pname)
@@ -158,6 +183,23 @@ classdef CalibSetup < handle
                 error('CalibSetup:addThetaPrior:badName', ...
                       ['No parameter name given or parameter not in set of ' ...
                        'input names for any model in setup.models']);
+            end
+            required = struct('normal', {{'mean','sd'}}, ...
+                              'lognormal', {{'meanlog','sdlog'}}, ...
+                              'beta', {{'shape1','shape2'}}, ...
+                              'uniform', {{'min','max'}}, ...
+                              'gamma', {{'shape','rate'}}, ...
+                              'cauchy', {{'location','scale'}});
+            if ~isfield(required, lower(dist))
+                error('CalibSetup:addThetaPrior:badDist', ...
+                      'Unsupported dist: %s. Supported distributions are %s.', ...
+                      dist, strjoin(fieldnames(required), ', '));
+            end
+            missing = setdiff(required.(lower(dist)), fieldnames(params), 'stable');
+            if ~isempty(missing)
+                error('CalibSetup:addThetaPrior:missingParams', ...
+                      'Missing parameters %s for dist ''%s''.', ...
+                      strjoin(missing, ', '), dist);
             end
 
             obj.theta_prior{end+1} = struct('name', pname, 'dist', dist, ...
@@ -342,6 +384,9 @@ classdef CalibSetup < handle
             end
 
             obj.models{end+1} = model;
+            if isprop(obj.models{1}, 'constants')
+                obj.constants = obj.models{1}.constants;
+            end
             obj.nexp = obj.nexp + 1;
             obj.sd_est{end+1} = sd_est;
             obj.wt{end+1} = wt;
