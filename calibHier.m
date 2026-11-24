@@ -10,6 +10,10 @@ function out = calibHier(setup)
 % 0-1 scale, with theta_ij restricted to the bounds. Set these with
 % setup.setHierPriors before calling.
 %
+% The restriction of theta_ij to the bounds contracts the effective
+% hyperprior on theta0 and Sigma0; hier_truncation_weights measures that
+% contraction for a finished run and reweights the output to remove it.
+%
 % Only the hierarchy and the likelihood are tempered; the hyperpriors on
 % theta0 and Sigma0 enter every chain at full strength, so they cancel in
 % the tempering swap ratio.

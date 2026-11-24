@@ -536,6 +536,8 @@ classdef CalibSetup < handle
             % (theta0, Sigma0) is the stated prior times
             % prod_i P(theta_i in bounds | theta0, Sigma0), which favours
             % small Sigma0 and theta0 away from the bounds.
+            % hier_truncation_weights measures that contraction for a
+            % finished run and reweights the output to remove it.
             %
             % theta0_prior_mean: 1 x p vector, usually 0.5*ones(1,p)
             % theta0_prior_cov: p x p matrix
