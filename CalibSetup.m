@@ -44,7 +44,6 @@ classdef CalibSetup < handle
         theta0_prior_cov
         Sigma0_prior_df
         Sigma0_prior_scale
-        hier_scale  % 'unit' (default) or 'probit'; see setHierPriors
         nclustmax
         eta_prior_shape
         eta_prior_rate
@@ -128,7 +127,6 @@ classdef CalibSetup < handle
             obj.eta_prior_shape = 2;
             obj.eta_prior_rate = 0.1;
             obj.scale_proposal = false;
-            obj.hier_scale = 'unit';
         end
 
         function good = checkConstraints(obj, x, bounds, constants)
@@ -525,40 +523,26 @@ classdef CalibSetup < handle
             obj.start_adapt_iter = start_adapt_iter;
         end
 
-        function obj = setHierPriors(obj, theta0_prior_mean, theta0_prior_cov, Sigma0_prior_df, Sigma0_prior_scale, scale)
+        function obj = setHierPriors(obj, theta0_prior_mean, theta0_prior_cov, Sigma0_prior_df, Sigma0_prior_scale)
             % Define hierarchical model hyperparameters, where
             % theta_i ~ N(theta0, Sigma0), theta0 ~ N(theta0_prior_mean,
             % theta0_prior_cov) and Sigma0 ~ InvWishart(Sigma0_prior_df,
-            % Sigma0_prior_scale). The prior mean of Sigma0 is
-            % Sigma0_prior_scale/(Sigma0_prior_df-p-1).
+            % Sigma0_prior_scale). Everything is on the 0-1 scale, and
+            % theta_i is restricted to the bounds. The prior mean of Sigma0
+            % is Sigma0_prior_scale/(Sigma0_prior_df-p-1).
             %
-            % theta0_prior_mean: 1 x p vector, usually 0.5*ones(1,p) on
-            %                    the 'unit' scale or zeros(1,p) on the
-            %                    'probit' scale
+            % The restriction of theta_i to the bounds is applied without
+            % its normalising constant, so the effective prior on
+            % (theta0, Sigma0) is the stated prior times
+            % prod_i P(theta_i in bounds | theta0, Sigma0), which favours
+            % small Sigma0 and theta0 away from the bounds.
+            %
+            % theta0_prior_mean: 1 x p vector, usually 0.5*ones(1,p)
             % theta0_prior_cov: p x p matrix
             % Sigma0_prior_df: prior degrees of freedom (> p+1); larger
             %                  values pull the theta_i toward theta0
             % Sigma0_prior_scale: p x p prior scale; smaller values pull
             %                     the theta_i toward theta0
-            % scale: the scale of the hierarchical normal model (used by
-            %        calibHier).
-            %        'unit' (default, the behaviour of earlier versions):
-            %        theta_i, theta0 and Sigma0 live on the 0-1 scale and
-            %        theta_i is restricted to the bounds. The restriction is
-            %        applied without its normalising constant, so the
-            %        effective prior on (theta0, Sigma0) is the stated prior
-            %        times prod_i P(theta_i in bounds | theta0, Sigma0),
-            %        which favours small Sigma0 and theta0 away from the
-            %        bounds.
-            %        'probit': the hierarchy is placed on z = probit(u),
-            %        where u is the 0-1 scaled parameter, so z_i ~
-            %        N(theta0, Sigma0) is not truncated by the bounds and
-            %        the conjugate Gibbs updates are exact. The priors are
-            %        then on the probit scale (theta0 ~ N(0, I) makes each
-            %        component of theta0 uniform on [0, 1]). theta and
-            %        theta0 are still returned on the 0-1 scale; Sigma0 is
-            %        returned on the probit scale. Constraints other than
-            %        the bounds still truncate the hierarchical distribution.
             %
             % returns an object of class CalibSetup
             arguments
@@ -567,11 +551,6 @@ classdef CalibSetup < handle
                 theta0_prior_cov
                 Sigma0_prior_df
                 Sigma0_prior_scale
-                scale = 'unit';
-            end
-            if ~(ischar(scale) || isstring(scale)) || ~any(strcmp(scale, {'unit', 'probit'}))
-                error('CalibSetup:setHierPriors:badScale', ...
-                      'scale must be ''unit'' or ''probit''');
             end
             if numel(theta0_prior_mean) ~= obj.p || ~isequal(size(theta0_prior_cov), [obj.p obj.p]) ...
                     || ~isequal(size(Sigma0_prior_scale), [obj.p obj.p])
@@ -586,13 +565,13 @@ classdef CalibSetup < handle
             obj.theta0_prior_cov = theta0_prior_cov;
             obj.Sigma0_prior_df = Sigma0_prior_df;
             obj.Sigma0_prior_scale = Sigma0_prior_scale;
-            obj.hier_scale = char(scale);
         end
 
         function theta_new = sample_hier_parent(obj, theta0, Sigma0, maxiter)
             % Draw parameters for a new experiment from the fitted
             % hierarchical distribution, theta_new ~ N(theta0, Sigma0), one
-            % draw per row, on the scale set by setHierPriors.
+            % draw per row, on the 0-1 scale, redrawing rows that violate
+            % the constraints.
             %
             % theta0: n x p theta0 samples on the 0-1 scale, as returned
             %         in calibHier(...).theta0 (e.g. squeeze(out.theta0(:,1,:)))
@@ -609,12 +588,7 @@ classdef CalibSetup < handle
             n = size(theta0, 1);
             p = size(theta0, 2);
             Sigma0 = reshape(Sigma0, n, p, p);
-            if strcmp(obj.hier_scale, 'probit')
-                z = sample_constrained(probit(clip_unit(theta0)), Sigma0, obj, maxiter, @tran_probit);
-                theta_new = invprobit(z);
-            else
-                theta_new = sample_constrained(theta0, Sigma0, obj, maxiter);
-            end
+            theta_new = sample_constrained(theta0, Sigma0, obj, maxiter);
         end
 
         function obj = setClusterPriors(obj, nclustmax, eta_prior_shape, eta_prior_rate, scale_proposal)
