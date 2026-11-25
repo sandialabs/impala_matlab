@@ -6,11 +6,13 @@ function out = calibHier(setup)
 % the theta_ind argument of addVecExperiments). Every theta gets its own
 % value, tied together by theta_ij ~ N(theta0, Sigma0) with
 % theta0 ~ N(theta0_prior_mean, theta0_prior_cov) and
-% Sigma0 ~ InvWishart(Sigma0_prior_df, Sigma0_prior_scale). Set these
-% with setup.setHierPriors before calling. By default (scale 'unit') the
-% hierarchy is on the 0-1 scale and theta_ij is restricted to the bounds;
-% with scale 'probit' it is on z = probit(u), u the 0-1 scaled parameter,
-% so the bounds do not truncate it (see CalibSetup.setHierPriors).
+% Sigma0 ~ InvWishart(Sigma0_prior_df, Sigma0_prior_scale), all on the
+% 0-1 scale, with theta_ij restricted to the bounds. Set these with
+% setup.setHierPriors before calling.
+%
+% The restriction of theta_ij to the bounds contracts the effective
+% hyperprior on theta0 and Sigma0; hier_truncation_weights measures that
+% contraction for a finished run and reweights the output to remove it.
 %
 % Only the hierarchy and the likelihood are tempered; the hyperpriors on
 % theta0 and Sigma0 enter every chain at full strength, so they cancel in
@@ -33,8 +35,7 @@ function out = calibHier(setup)
 % count_temper: accepted tempering swaps (symmetric)
 % pred_curr: current predictions
 % theta0: mcmc samples of theta0 (nmcmc x ntemps x p, 0-1 scale)
-% Sigma0: mcmc samples of Sigma0 (nmcmc x ntemps x p x p, on the scale
-%         of the hierarchy: 0-1 or probit)
+% Sigma0: mcmc samples of Sigma0 (nmcmc x ntemps x p x p, 0-1 scale)
 % llik: log likelihood at temperature 1
 % theta_native: cell, theta at temperature 1 on the native scale (struct
 %               of nmcmc x ntheta(i) arrays)
@@ -59,14 +60,6 @@ nmcmc = setup.nmcmc;
 sched = setup.makeSwapScheduler();
 itl = sched.itl;
 ntheta = setup.ntheta;
-% scale of the hierarchical normal model (see CalibSetup.setHierPriors):
-% with 'probit', theta and theta0 are sampled as z = probit(u), u in [0,1]
-latent = strcmp(setup.hier_scale, 'probit');
-if latent
-    to_native = @tran_probit;
-else
-    to_native = @tran_unif;
-end
 Ntheta = sum(ntheta);
 
 % observation indices for each theta
@@ -116,9 +109,6 @@ else
         end
     end
 end
-if latent
-    th0 = probit(clip_unit(th0));
-end
 Sig0 = repmat(reshape(Sigma0_prior_scale / (Sigma0_prior_df - p - 1), 1, p, p), nt, 1);
 [Sig0_inv, Sig0_ldet] = inv_ldet(Sig0);
 
@@ -128,7 +118,7 @@ llik_curr = cell(1, nexp);
 marg_lik_cov_cur = cell(1, nexp);
 for i = 1:nexp
     nth = ntheta(i);
-    th{i} = reshape(sample_constrained(repmat(th0, nth, 1), reshape(Sig0(1,:,:), p, p), setup, 10000, to_native), nt, nth, p);
+    th{i} = reshape(sample_constrained(repmat(th0, nth, 1), reshape(Sig0(1,:,:), p, p), setup), nt, nth, p);
     pred_curr{i} = eval_unpooled(i, th{i});
     marg_lik_cov_cur{i} = cell(nt, nth);
     llik_curr{i} = zeros(nt, nth);
@@ -225,7 +215,7 @@ for m = 2:nmcmc
         means0(t,:) = (cc * dd)';
         covs0(t,:,:) = cc;
     end
-    th0 = sample_constrained(means0, covs0, setup, 10000, to_native);
+    th0 = sample_constrained(means0, covs0, setup);
 
     % Gibbs update of Sigma0
     for t = 1:nt
@@ -245,7 +235,7 @@ for m = 2:nmcmc
             z = 0.1 * randn;
             th0_cand = th0;
             th0_cand(:,k) = th0_cand(:,k) + z;
-            good0 = reshape(setup.checkConstraints(to_native(th0_cand, setup.bounds_mat, names), setup.bounds), nt, 1);
+            good0 = reshape(setup.checkConstraints(tran_unif(th0_cand, setup.bounds_mat, names), setup.bounds), nt, 1);
             % theta0 prior: counted once and not tempered, consistent with
             % the Gibbs update of theta0
             alpha_tot = mvn_prior0(th0_cand) - mvn_prior0(th0);
@@ -325,15 +315,6 @@ for m = 2:nmcmc
 end
 pbar.release();
 
-if latent
-    % return theta and theta0 on the 0-1 scale like the 'unit' model, so
-    % post-processing is unchanged; Sigma0 stays on the probit scale
-    for i = 1:nexp
-        theta{i} = invprobit(theta{i});
-    end
-    theta0 = invprobit(theta0);
-end
-
 s2 = cell(1, nexp);
 theta_native = cell(1, nexp);
 for i = 1:nexp
@@ -369,13 +350,13 @@ out.round_trips = sched.round_trips;
     function pred = eval_unpooled(i, thi)
         % thi: ntemps x ntheta(i) x p -> ntemps x ny predictions
         X = reshape(thi, nt*ntheta(i), p);
-        pred = setup.models{i}.eval(to_native(X, setup.bounds_mat, names), false);
+        pred = setup.models{i}.eval(tran_unif(X, setup.bounds_mat, names), false);
     end
 
     function good = good_thetas(thi)
         nth = size(thi, 2);
         X = reshape(thi, nt*nth, p);
-        good = reshape(setup.checkConstraints(to_native(X, setup.bounds_mat, names), setup.bounds), nt, nth);
+        good = reshape(setup.checkConstraints(tran_unif(X, setup.bounds_mat, names), setup.bounds), nt, nth);
     end
 
     function c = lik_cov(i, ls2_row, j)

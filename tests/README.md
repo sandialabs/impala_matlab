@@ -47,6 +47,7 @@ resolves those names to the wrong function.
 | `tensorproductTest.m`  | `tensorproduct` (+ core/initialize)            |
 | `cov3dPcmTest.m`       | `cov_3d_pcm`                                   |
 | `cholSampleTest.m`     | `chol_sample`                                  |
+| `hierParentTest.m`     | `CalibSetup.sample_hier_parent`                |
 
 ### Ports of the python package's tests
 
@@ -54,6 +55,7 @@ resolves those names to the wrong function.
 |----------------------------|-------------------------------|----------------------------------------------|
 | `calibClustTest.m`         | `test_clust.py`               | `calibClust`                                 |
 | `calibHierTest.m`          | `test_hier.py`                | `calibHier`                                  |
+| `hierTruncationTest.m`     | `test_hier_truncation.py`     | `hier_truncation_weights`, `log_box_prob`, `weighted_quantile` |
 | `friedmanFitTest.m`        | `test_friedman_fit.py`        | `calibPool`, `ModelF`                        |
 | `thetaPriorTest.m`         | `test_theta_prior.py`         | `addThetaPrior`, `addJointThetaPrior`, `eval_theta_priors`, priors in `calibPool` |
 | `physicsModelsTest.m`      | `test_physical_models_vec.py` | `physics.MaterialModel` (PTW), `ModelMaterialStrength`, `constraints_ptw` |
